@@ -89,7 +89,7 @@ async function sendNotification(message, target = 'All', oneSignalId = null) {
   try {
     if (!ONESIGNAL_API_KEY) {
       console.error('ONESIGNAL_API_KEY is not set');
-      return;
+      return false;
     }
     const notificationData = {
       app_id: ONESIGNAL_APP_ID,
@@ -113,9 +113,11 @@ async function sendNotification(message, target = 'All', oneSignalId = null) {
         }
       }
     );
-    console.log(`Notification sent to ${oneSignalId || target}: ${message}`, response.data);
+    console.log(`Notification sent successfully to ${oneSignalId || target}: ${message}`, response.data);
+    return true;
   } catch (error) {
     console.error('Error sending notification:', error.response ? error.response.data : error.message);
+    return false;
   }
 }
 
@@ -149,6 +151,7 @@ async function awardCoins(userId) {
     await db.collection('users').doc(userId).update({
       adsWatched: 0,
       lastAdTime: new Date().toISOString(),
+      adCooldownEndTime: Date.now() + COOLDOWN_MINUTES * 60 * 1000,
       coins: newCoins,
       rewards
     });
@@ -164,16 +167,19 @@ const getIstTime = () => new Date(Date.now() + istOffset).toLocaleString('en-US'
 cron.schedule('0 0 0,3,6,9,12,15,18,21 * * *', async () => {
   console.log('Scheduling notifications at', getIstTime());
   const adMessage = await generateNotificationMessage('ad');
-  await sendNotification(adMessage);
+  const success = await sendNotification(adMessage);
+  console.log(`Ad notification ${success ? 'sent' : 'failed'}: ${adMessage}`);
 
   const appMessage = await generateNotificationMessage('app');
-  await sendNotification(appMessage, 'Active Users'); // Target active users
+  const appSuccess = await sendNotification(appMessage, 'Active Users');
+  console.log(`App notification ${appSuccess ? 'sent' : 'failed'}: ${appMessage}`);
 
   // Additional midnight notifications (10 PM, 11 PM, 12 AM IST)
   const utcHour = new Date().getUTCHours();
-  if ([15, 16, 17].includes(utcHour + 5.5)) { // 10 PM, 11 PM, 12 AM IST
+  if ([16, 17, 18].includes(utcHour)) { // Adjusted for UTC+5:30
     const extraAdMessage = await generateNotificationMessage('ad');
-    await sendNotification(extraAdMessage);
+    const extraSuccess = await sendNotification(extraAdMessage);
+    console.log(`Extra ad notification ${extraSuccess ? 'sent' : 'failed'}: ${extraAdMessage}`);
   }
 });
 
@@ -231,12 +237,27 @@ app.post('/buy-feature', async (req, res) => {
   }
 });
 
+// API endpoint to update oneSignalId
+app.post('/update-onesignal', async (req, res) => {
+  const { userId, oneSignalId } = req.body;
+  if (!userId || !oneSignalId) return res.status(400).send('User ID and OneSignal ID required');
+
+  try {
+    await db.collection('users').doc(userId).set({ oneSignalId }, { merge: true });
+    console.log(`Updated oneSignalId for user ${userId}: ${oneSignalId}`);
+    res.send({ message: 'OneSignal ID updated successfully' });
+  } catch (error) {
+    console.error(`Error updating oneSignalId for user ${userId}:`, error.message);
+    res.status(500).send('Error updating OneSignal ID');
+  }
+});
+
 // Firestore listener for new subscriptions
 db.collection('Premium').onSnapshot((snapshot) => {
   snapshot.docChanges().forEach(async (change) => {
     try {
       const data = change.doc.data();
-      const userId = data.userId;
+      let userId = data.userId || change.doc.id; // Fallback to doc ID
       if (!userId) {
         console.error('Invalid or missing userId in Premium collection snapshot:', change.doc.id, data);
         return;
@@ -245,13 +266,19 @@ db.collection('Premium').onSnapshot((snapshot) => {
         const subscriptionType = data.subscriptionType || 'unknown';
         console.log(`Processing subscription for user ${userId}, type: ${subscriptionType}`);
 
+        // Fix missing userId field in Firestore
+        if (!data.userId) {
+          await db.collection('Premium').doc(change.doc.id).update({ userId });
+          console.log(`Fixed missing userId for Premium doc ${change.doc.id}`);
+        }
+
         // Fetch user's oneSignalId from users collection
         const userDoc = await db.collection('users').doc(userId).get();
         if (userDoc.exists && userDoc.data().oneSignalId) {
           const oneSignalId = userDoc.data().oneSignalId;
           const message = await generateNotificationMessage('subscription');
-          await sendNotification(message, null, oneSignalId);
-          console.log(`Subscription notification sent to user ${userId} for ${subscriptionType}`);
+          const success = await sendNotification(message, null, oneSignalId);
+          console.log(`Subscription notification ${success ? 'sent' : 'failed'} to user ${userId} for ${subscriptionType}`);
         } else {
           console.warn(`No oneSignalId found for user ${userId} or user document missing`);
         }
@@ -280,8 +307,8 @@ db.collection('users').onSnapshot((snapshot) => {
         if (userData.coins > (oldData.coins || 0) && !userData.lastAdTime) {
           if (oneSignalId) {
             const message = await generateNotificationMessage('coin_purchase');
-            await sendNotification(message, null, oneSignalId);
-            console.log(`Coin purchase notification sent to user ${userId}`);
+            const success = await sendNotification(message, null, oneSignalId);
+            console.log(`Coin purchase notification ${success ? 'sent' : 'failed'} to user ${userId}`);
           } else {
             console.warn(`No oneSignalId found for user ${userId} for coin purchase`);
           }
@@ -301,8 +328,8 @@ db.collection('users').onSnapshot((snapshot) => {
             const userDoc = await db.collection('users').doc(userId).get();
             if (userDoc.exists && userDoc.data().adCooldownEndTime <= Date.now()) {
               const message = await generateNotificationMessage('cooldown');
-              await sendNotification(message, null, oneSignalId);
-              console.log(`Cooldown completion notification sent to user ${userId}`);
+              const success = await sendNotification(message, null, oneSignalId);
+              console.log(`Cooldown completion notification ${success ? 'sent' : 'failed'} to user ${userId}`);
             } else {
               console.log(`Cooldown not yet complete for user ${userId} or user data missing`);
             }
