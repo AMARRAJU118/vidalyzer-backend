@@ -5,6 +5,7 @@ const { initializeApp } = require('firebase-admin/app');
 const { getFirestore } = require('firebase-admin/firestore');
 
 const app = express();
+app.use(express.json()); // Parse JSON request bodies
 const port = process.env.PORT || 3000;
 
 // Firebase Admin SDK initialization with environment variables
@@ -22,16 +23,33 @@ const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID || 'd2288872-b12c-4974-af8
 const ONESIGNAL_API_KEY = process.env.ONESIGNAL_API_KEY || '';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 
-// Ad and coin tracking
+// Ad and coin tracking constants
 const ADS_TO_WATCH = 10;
 const COOLDOWN_MINUTES = 15;
 
 // Function to generate engaging, growth-motivated notification message using ChatGPT
 async function generateNotificationMessage(type = 'ad', userId = null) {
   try {
-    const prompt = type === 'ad'
-      ? 'Generate a short, fun, dopamine-boosting push notification (max 50 characters) to motivate an Indian user to watch ads for coins in Vidalyzer to grow their YouTube/Instagram, e.g., "Hey, boost YouTube—watch ads! 🎉"'
-      : 'Generate a short, fun, dopamine-boosting push notification (max 50 characters) to motivate an Indian user to use Vidalyzer daily to grow their YouTube/Instagram, e.g., "Morning champ! Grow Insta now! 😍" and feel like a friend encouraging growth';
+    let prompt;
+    switch (type) {
+      case 'ad':
+        prompt = 'Generate a short, fun, dopamine-boosting push notification (max 50 characters) to motivate an Indian user to watch ads for coins in Vidalyzer to grow their YouTube/Instagram, e.g., "Hey, boost YouTube—watch ads! 🎉"';
+        break;
+      case 'app':
+        prompt = 'Generate a short, fun, dopamine-boosting push notification (max 50 characters) to motivate an Indian user to use Vidalyzer daily to grow their YouTube/Instagram, e.g., "Morning champ! Grow Insta now! 😍" and feel like a friend encouraging growth';
+        break;
+      case 'subscription':
+        prompt = 'Generate a short, fun, dopamine-boosting push notification (max 50 characters) to celebrate an Indian user’s new Vidalyzer subscription, e.g., "Welcome to Premium! Skyrocket growth! 🎉"';
+        break;
+      case 'coin_purchase':
+        prompt = 'Generate a short, fun, dopamine-boosting push notification (max 50 characters) to celebrate an Indian user buying coins in Vidalyzer, e.g., "Coins added! Boost your channels! 🚀"';
+        break;
+      case 'cooldown':
+        prompt = 'Generate a short, fun, dopamine-boosting push notification (max 50 characters) to notify an Indian user that their ad-watch cooldown in Vidalyzer is over, e.g., "Cooldown done! Watch ads to grow! 🎥"';
+        break;
+      default:
+        prompt = 'Generate a short, fun, dopamine-boosting push notification (max 50 characters) to motivate an Indian user to use Vidalyzer, e.g., "Grow Insta today! 😍"';
+    }
     const response = await axios.post(
       'https://api.openai.com/v1/chat/completions',
       {
@@ -49,21 +67,41 @@ async function generateNotificationMessage(type = 'ad', userId = null) {
     return response.data.choices[0].message.content.trim();
   } catch (error) {
     console.error('Error generating notification:', error.response ? error.response.data : error.message);
-    return type === 'ad' ? 'Boost YouTube—watch ads! 🎉' : 'Grow Insta today! 😍';
+    switch (type) {
+      case 'ad':
+        return 'Boost YouTube—watch ads! 🎉';
+      case 'app':
+        return 'Grow Insta today! 😍';
+      case 'subscription':
+        return 'Welcome to Premium! Skyrocket growth! 🎉';
+      case 'coin_purchase':
+        return 'Coins added! Boost your channels! 🚀';
+      case 'cooldown':
+        return 'Cooldown done! Watch ads to grow! 🎥';
+      default:
+        return 'Grow with Vidalyzer now! 🚀';
+    }
   }
 }
 
-// Function to send push notification via OneSignal
-async function sendNotification(message, segment = 'All') {
+// Function to send push notification via OneSignal to a specific user or segment
+async function sendNotification(message, target = 'All', oneSignalId = null) {
   try {
+    const notificationData = {
+      app_id: ONESIGNAL_APP_ID,
+      contents: { en: message },
+      headings: { en: 'Vidalyzer Growth!' }
+    };
+
+    if (oneSignalId) {
+      notificationData.include_player_ids = [oneSignalId]; // Target specific user
+    } else {
+      notificationData.included_segments = [target]; // Target segment
+    }
+
     await axios.post(
       'https://onesignal.com/api/v1/notifications',
-      {
-        app_id: ONESIGNAL_APP_ID,
-        included_segments: [segment],
-        contents: { en: message },
-        headings: { en: 'Vidalyzer Growth!' }
-      },
+      notificationData,
       {
         headers: {
           'Authorization': `Basic ${ONESIGNAL_API_KEY}`,
@@ -71,7 +109,7 @@ async function sendNotification(message, segment = 'All') {
         }
       }
     );
-    console.log('Notification sent:', message);
+    console.log(`Notification sent to ${oneSignalId || target}: ${message}`);
   } catch (error) {
     console.error('Error sending notification:', error.response ? error.response.data : error.message);
   }
@@ -160,9 +198,14 @@ app.post('/buy-feature', async (req, res) => {
   const userData = await checkAdStatus(userId);
   let cost = 0;
   switch (feature) {
-    case 'followers': cost = quantity * 10; break; // 10 coins per Instagram follower
-    case 'subscribers': cost = quantity * 20; break; // 20 coins per YouTube subscriber
-    default: return res.status(400).send('Invalid feature');
+    case 'followers':
+      cost = quantity * 10;
+      break; // 10 coins per Instagram follower
+    case 'subscribers':
+      cost = quantity * 20;
+      break; // 20 coins per YouTube subscriber
+    default:
+      return res.status(400).send('Invalid feature');
   }
 
   if (userData.coins >= cost) {
@@ -174,6 +217,79 @@ app.post('/buy-feature', async (req, res) => {
   } else {
     res.status(402).send({ message: 'Need more coins to grow!' });
   }
+});
+
+// Firestore listener for new subscriptions
+db.collection('Premium').onSnapshot((snapshot) => {
+  snapshot.docChanges().forEach(async (change) => {
+    if (change.type === 'added' || (change.type === 'modified' && change.doc.data().isPremiumUser)) {
+      const userId = change.doc.data().userId;
+      const subscriptionType = change.doc.data().subscriptionType;
+
+      // Fetch user's oneSignalId from users collection
+      const userDoc = await db.collection('users').doc(userId).get();
+      if (userDoc.exists && userDoc.data().oneSignalId) {
+        const oneSignalId = userDoc.data().oneSignalId;
+        const message = await generateNotificationMessage('subscription');
+        await sendNotification(message, null, oneSignalId);
+        console.log(`Subscription notification sent to user ${userId} for ${subscriptionType}`);
+      } else {
+        console.error(`No oneSignalId found for user ${userId}`);
+      }
+    }
+  });
+});
+
+// Firestore listener for coin purchases
+db.collection('users').onSnapshot((snapshot) => {
+  snapshot.docChanges().forEach(async (change) => {
+    if (change.type === 'modified') {
+      const newData = change.doc.data();
+      const oldData = change.oldIndex !== -1 ? snapshot.docs[change.oldIndex].data() : {};
+
+      // Check if coins increased and it's not due to ad rewards
+      if (newData.coins > (oldData.coins || 0) && !newData.lastAdTime) {
+        const userId = change.doc.id;
+        const oneSignalId = newData.oneSignalId;
+        if (oneSignalId) {
+          const message = await generateNotificationMessage('coin_purchase');
+          await sendNotification(message, null, oneSignalId);
+          console.log(`Coin purchase notification sent to user ${userId}`);
+        } else {
+          console.error(`No oneSignalId found for user ${userId}`);
+        }
+      }
+    }
+  });
+});
+
+// Firestore listener and scheduler for ad cooldown completion
+db.collection('users').onSnapshot((snapshot) => {
+  snapshot.docChanges().forEach((change) => {
+    if (change.type === 'added' || change.type === 'modified') {
+      const userData = change.doc.data();
+      const userId = change.doc.id;
+      const oneSignalId = userData.oneSignalId;
+      const cooldownEndTime = userData.adCooldownEndTime;
+
+      if (cooldownEndTime && oneSignalId) {
+        const now = Date.now();
+        const timeUntilCooldownEnds = cooldownEndTime - now;
+
+        if (timeUntilCooldownEnds > 0 && timeUntilCooldownEnds < 24 * 60 * 60 * 1000) { // Only schedule if within 24 hours
+          setTimeout(async () => {
+            // Verify cooldown is still complete
+            const userDoc = await db.collection('users').doc(userId).get();
+            if (userDoc.exists && userDoc.data().adCooldownEndTime <= Date.now()) {
+              const message = await generateNotificationMessage('cooldown');
+              await sendNotification(message, null, oneSignalId);
+              console.log(`Cooldown completion notification sent to user ${userId}`);
+            }
+          }, timeUntilCooldownEnds);
+        }
+      }
+    }
+  });
 });
 
 // Start the server
