@@ -18,10 +18,18 @@ initializeApp({
 });
 const db = getFirestore();
 
-// Environment variables
+// Environment variables with stricter validation
 const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID || 'd2288872-b12c-4974-af8c-e98665ea2564';
-const ONESIGNAL_API_KEY = process.env.ONESIGNAL_API_KEY || '';
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+const ONESIGNAL_API_KEY = process.env.ONESIGNAL_API_KEY;
+if (!ONESIGNAL_API_KEY) {
+  console.error('ONESIGNAL_API_KEY is required but not set. Exiting.');
+  process.exit(1);
+}
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+if (!OPENAI_API_KEY) {
+  console.error('OPENAI_API_KEY is required but not set. Exiting.');
+  process.exit(1);
+}
 
 // Ad and coin tracking constants
 const ADS_TO_WATCH = 10;
@@ -96,10 +104,7 @@ async function generateNotificationMessage(type = 'ad', userId = null) {
 // Send push notification via OneSignal
 async function sendNotification(message, target = 'All', oneSignalId = null) {
   try {
-    if (!ONESIGNAL_API_KEY) {
-      console.error('ONESIGNAL_API_KEY is not set');
-      return false;
-    }
+    if (!ONESIGNAL_API_KEY) throw new Error('ONESIGNAL_API_KEY is not set');
     if (oneSignalId && !isValidOneSignalId(oneSignalId)) {
       console.warn(`Invalid oneSignalId format: ${oneSignalId}`);
       return false;
@@ -173,26 +178,29 @@ async function awardCoins(userId) {
   return { coins: 0, message: 'Watch 10 ads to grow your channels!' };
 }
 
-// Schedule notifications for IST
+// Schedule notifications for IST (every hour for testing)
 const istOffset = 5.5 * 60 * 60 * 1000;
 const getIstTime = () => new Date(Date.now() + istOffset).toLocaleString('en-US', { timeZone: 'Asia/Kolkata' });
 
-cron.schedule('0 0 0,3,6,9,12,15,18,21 * * *', async () => {
+cron.schedule('0 * * * *', async () => { // Runs every hour
   console.log('Scheduling notifications at', getIstTime());
   const adMessage = await generateNotificationMessage('ad');
   const success = await sendNotification(adMessage);
-  console.log(`Ad notification ${success ? 'sent' : 'failed'}: ${adMessage}`);
+  console.log(`Ad notification ${success ? 'sent' : 'failed'} at ${getIstTime()}: ${adMessage}`);
 
   const appMessage = await generateNotificationMessage('app');
   const appSuccess = await sendNotification(appMessage, 'Active Users');
-  console.log(`App notification ${appSuccess ? 'sent' : 'failed'}: ${appMessage}`);
+  console.log(`App notification ${appSuccess ? 'sent' : 'failed'} at ${getIstTime()}: ${appMessage}`);
 
   const utcHour = new Date().getUTCHours();
   if ([16, 17, 18].includes(utcHour)) {
     const extraAdMessage = await generateNotificationMessage('ad');
     const extraSuccess = await sendNotification(extraAdMessage);
-    console.log(`Extra ad notification ${extraSuccess ? 'sent' : 'failed'}: ${extraAdMessage}`);
+    console.log(`Extra ad notification ${extraSuccess ? 'sent' : 'failed'} at ${getIstTime()}: ${extraAdMessage}`);
   }
+}, {
+  scheduled: true,
+  timezone: 'Asia/Kolkata'
 });
 
 // API endpoint to track ad watching
@@ -282,36 +290,31 @@ db.collection('Premium').onSnapshot((snapshot) => {
         return;
       }
 
-      // Enhanced deduplication
       const snapshotKey = `${userId}:${change.type}:${data.subscriptionType || 'unknown'}:${change.doc.id}`;
       const lastProcessed = processedSnapshots.get(snapshotKey);
       const now = Date.now();
-      if (lastProcessed && now - lastProcessed < 300000) { // 5-minute window
-        console.log(`Skipping duplicate snapshot for Premium doc ${change.doc.id}, user ${userId}, type: ${change.type}, subscriptionType: ${data.subscriptionType}`);
+      if (lastProcessed && now - lastProcessed < 300000) {
+        console.log(`Skipping duplicate snapshot for Premium doc ${change.doc.id}, user ${userId}`);
         return;
       }
       processedSnapshots.set(snapshotKey, now);
       setTimeout(() => processedSnapshots.delete(snapshotKey), 300000);
 
       if (change.type === 'added' || (change.type === 'modified' && data.isPremiumUser)) {
-        const subscriptionType = data.subscriptionType || 'unknown';
-        console.log(`Processing subscription for user ${userId}, type: ${subscriptionType}`);
-
-        // Fix missing userId
+        console.log(`Processing subscription for user ${userId}, type: ${data.subscriptionType || 'unknown'}`);
         if (!data.userId) {
           await db.collection('Premium').doc(change.doc.id).update({ userId });
           console.log(`Fixed missing userId for Premium doc ${change.doc.id}`);
         }
 
-        // Fetch oneSignalId
         const userDoc = await db.collection('users').doc(userId).get();
         if (userDoc.exists && userDoc.data().oneSignalId && isValidOneSignalId(userDoc.data().oneSignalId)) {
           const oneSignalId = userDoc.data().oneSignalId;
           const message = await generateNotificationMessage('subscription');
           const success = await sendNotification(message, null, oneSignalId);
-          console.log(`Subscription notification ${success ? 'sent' : 'failed'} to user ${userId} for ${subscriptionType}, oneSignalId: ${oneSignalId}`);
+          console.log(`Subscription notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}`);
         } else {
-          console.warn(`No valid oneSignalId found for user ${userId}`, { userId, docExists: userDoc.exists, oneSignalId: userDoc.data()?.oneSignalId });
+          console.warn(`No valid oneSignalId found for user ${userId}`, { userId, exists: userDoc.exists, oneSignalId: userDoc.data()?.oneSignalId });
         }
       }
     } catch (error) {
@@ -332,32 +335,28 @@ db.collection('users').onSnapshot((snapshot) => {
       const userData = change.doc.data();
       const oneSignalId = userData.oneSignalId;
 
-      // Coin purchases
       if (change.type === 'modified') {
         const oldData = change.oldIndex !== -1 ? snapshot.docs[change.oldIndex].data() : {};
         if (userData.coins > (oldData.coins || 0) && !userData.lastAdTime && oneSignalId && isValidOneSignalId(oneSignalId)) {
           const message = await generateNotificationMessage('coin_purchase');
           const success = await sendNotification(message, null, oneSignalId);
-          console.log(`Coin purchase notification ${success ? 'sent' : 'failed'} to user ${userId}, oneSignalId: ${oneSignalId}`);
+          console.log(`Coin purchase notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}`);
         }
       }
 
-      // Cooldown completion
       if ((change.type === 'added' || change.type === 'modified') && userData.adCooldownEndTime && oneSignalId && isValidOneSignalId(oneSignalId)) {
         const now = Date.now();
         const cooldownEndTime = userData.adCooldownEndTime;
         const timeUntilCooldownEnds = cooldownEndTime - now;
 
         if (timeUntilCooldownEnds > 0 && timeUntilCooldownEnds < 24 * 60 * 60 * 1000) {
-          console.log(`Scheduling cooldown notification for user ${userId} in ${timeUntilCooldownEnds / 1000} seconds`);
+          console.log(`Scheduling cooldown notification for ${userId} in ${timeUntilCooldownEnds / 1000} seconds`);
           setTimeout(async () => {
             const userDoc = await db.collection('users').doc(userId).get();
             if (userDoc.exists && userDoc.data().adCooldownEndTime <= Date.now()) {
               const message = await generateNotificationMessage('cooldown');
               const success = await sendNotification(message, null, oneSignalId);
-              console.log(`Cooldown completion notification ${success ? 'sent' : 'failed'} to user ${userId}, oneSignalId: ${oneSignalId}`);
-            } else {
-              console.log(`Cooldown not yet complete for user ${userId} or user data missing`);
+              console.log(`Cooldown notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}`);
             }
           }, timeUntilCooldownEnds);
         }
@@ -368,6 +367,12 @@ db.collection('users').onSnapshot((snapshot) => {
   });
 });
 
-// Start server
+// Start server with health check
 app.get('/', (req, res) => res.send('Vidalyzer Backend Running'));
-app.listen(port, () => console.log(`Server running on port ${port}`));
+app.listen(port, () => console.log(`Server running on port ${port} at ${getIstTime()}`));
+
+// Keep server alive (ping every 5 minutes)
+setInterval(() => {
+  console.log(`Pinging self at ${getIstTime()} to keep instance alive`);
+  axios.get(`http://localhost:${port}/`).catch(err => console.error('Ping failed:', err.message));
+}, 5 * 60 * 1000);
