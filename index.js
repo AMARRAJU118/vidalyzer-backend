@@ -9,8 +9,12 @@ const port = process.env.PORT || 3000;
 
 // Firebase Admin SDK initialization (configure with your service account)
 initializeApp({
-  credential: require('path-to-your-service-account-key.json')
-});
+    credential: require('firebase-admin').credential.cert({
+      projectId: process.env.vidalyzer-aeb96,
+      clientEmail: process.env.firebase-adminsdk-amy96@vidalyzer-aeb96.iam.gserviceaccount.com,
+      privateKey: process.env.nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDHvommAq7TnhfO\no5koxiTM5Z46vU8VMu9HWflwmfbd5fjOUNmL9Ug5V6DFDKofL3fT2M+WS6Px+3Ud\n/hvLPe1MwB4k0F3FCbXLjMkd1AW1oqnW+Qi8wDaiYPKFY700cGgHbCa/wBqU/NyL\nhAKtUR8rKU7g7f8W4fmQO1VgxTjDGB4rUJLovXxwZl8rpTxzDlzz1PFT+DLHH1No\nCOCaOQugyU6exeP5bCIPz5GFe7Ddjza2IVFyF0HeBqLoQAAObnEw2dqX1mftNuQb\nKRA4PY5VKSNZnbNw8wW4ntSTfmocdB2KYrDJOeO7kuKP52OYZeCXPi6L2yFqdS1r\nkJX8nPEzAgMBAAECggEAJRQADkKCPIMkzTV+OVzquORI5oN8uiUt2LNhg974vgEy\nGe5VK89Y3FghXmK287oGhttA0Zfx83nnqC0i8KvqsGwbTF8ngOuIBSR5suFIPArZ\ndy/cSNlvat4PNuaoWSMilHoliUO6S3zS3c0gCBc+b28oFsXnK9K/1l/FPgTuP/yW\ngaDXepS3BzVpdcyXugK63jpEjaWq89qRZ6NurI7V4h0wLOR0lKFRd4EQQ4qzouAI\nmPgbsDUl2qnQ0J2ckLQYvYyIYqCVvAwc6prtnK28Q/DdwX9H8IabQy0ACRwSAz6P\nh/L5CGOOGShVVtbMTUAGWF1Pn0txTNwbE0jbFx1bwQKBgQDw+S26jVQ7V2TQ0yu4\n/98RpZE/I7vyP6mNySQEhJdVIK8c9TwSu85mJZxTP9DtOEFOzlnLVE4iq39yLlCp\n1gj/51kfEsWPDKqgYY1Bq/+1U4W6elVRxGsshMOuTwJYUUAsmFEl7aLJ8YvSJ4k7\nv7T6mDVAemKAQ3JI2Q+1zSwlQQKBgQDUMzED8xNHxRvC/bQ+iBTbJZXSR+zdZQMU\n4A6yhkkqKjlPiADejHTQTICfqE6vtKw4wMLZWIKIDHUgEnb/eVT3igPqqdw+B1Kz\nrioYhcuK7BZf48DtqCRnNMFgs7H9atr/JkQRO0LKsbQEe663XAZU2or3VeQ7QVlG\ntYqp1OH1cwKBgHhTpK7zpWzgTdosqDd/pQ61wxppKI9llK/VEWQkJUD/yhFGr5GX\nMBA3laDIS/Y4Ufwc9B+g4EdVpZUJZYP4+ZN3HTxz7ixpIcZmD9gMH+qWYz9jmLj0\nwKOBRAkFMOGS6N2bzWGIEPKP58avsUohhyhe2rBwrEDp7OZNZRfd9L5BAoGBAI5f\nRlyzA1Wc/xJl7EAkR3H9lrb+gQLOGjIwXkwTYxWCPO+KfaLTtDBpk8cLQrgKzZ5K\nXrE6/GFRkmgRW3vvKT3ogNY6X0XS3f8mNKI9aqJr4ls10STjMoF4WOKLzjkML6EP\nSI4TJ64dan2zijcF7E2UT7bBDx9eqgqSFVX7OhvXAoGBAKK3pfrEpNYYLEF/pFsd\n1dTD0NipWGKlVnp8HBIJwnTUEt9qI/CneDOrj99vf+gQrr6FIIvfUphAGkHr7qGp\njQj7DGIvsDwxXH/FwvtswTsG8XzeXa4ZnUYwwYT7IukWVGJlDmXgb/cqnWQyMmVe\n587w+wk9IQuIlLApe3PZ0nhH.replace(/\\n/g, '\n')
+    })
+  });
 const db = getFirestore();
 
 // Environment variables
