@@ -6,7 +6,7 @@ const { getFirestore } = require('firebase-admin/firestore');
 
 const app = express();
 app.use(express.json()); // Parse JSON request bodies
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 10000; // Use Render's PORT or default to 10000
 
 // Firebase Admin SDK initialization with environment variables
 initializeApp({
@@ -117,6 +117,10 @@ async function sendNotification(message, target = 'All', oneSignalId = null) {
 
 // Function to check and update ad watch status
 async function checkAdStatus(userId) {
+  if (!userId) {
+    console.error('Invalid userId in checkAdStatus');
+    return null;
+  }
   const userRef = db.collection('users').doc(userId);
   const doc = await userRef.get();
   if (!doc.exists) {
@@ -129,6 +133,7 @@ async function checkAdStatus(userId) {
 // Function to award coins and handle rewards
 async function awardCoins(userId) {
   const userData = await checkAdStatus(userId);
+  if (!userData) return { coins: 0, message: 'Invalid user data' };
   if (userData.adsWatched >= ADS_TO_WATCH) {
     const coins = Math.floor(Math.random() * (25 - 10 + 1)) + 10; // Random 10-25 coins
     const newCoins = userData.coins + coins;
@@ -173,6 +178,7 @@ app.post('/watch-ad', async (req, res) => {
   if (!userId) return res.status(400).send('User ID required');
 
   const userData = await checkAdStatus(userId);
+  if (!userData) return res.status(500).send('Error accessing user data');
   const now = new Date();
   const lastAdTime = userData.lastAdTime ? new Date(userData.lastAdTime) : null;
   const cooldownElapsed = !lastAdTime || (now - lastAdTime) / (1000 * 60) >= COOLDOWN_MINUTES;
@@ -196,6 +202,7 @@ app.post('/buy-feature', async (req, res) => {
   if (!userId || !feature || !quantity) return res.status(400).send('User ID, feature, and quantity required');
 
   const userData = await checkAdStatus(userId);
+  if (!userData) return res.status(500).send('Error accessing user data');
   let cost = 0;
   switch (feature) {
     case 'followers':
@@ -224,6 +231,10 @@ db.collection('Premium').onSnapshot((snapshot) => {
   snapshot.docChanges().forEach(async (change) => {
     if (change.type === 'added' || (change.type === 'modified' && change.doc.data().isPremiumUser)) {
       const userId = change.doc.data().userId;
+      if (!userId) {
+        console.error('Invalid userId in Premium collection snapshot');
+        return;
+      }
       const subscriptionType = change.doc.data().subscriptionType;
 
       // Fetch user's oneSignalId from users collection
@@ -240,40 +251,36 @@ db.collection('Premium').onSnapshot((snapshot) => {
   });
 });
 
-// Firestore listener for coin purchases
+// Firestore listener for coin purchases and cooldown completion
 db.collection('users').onSnapshot((snapshot) => {
   snapshot.docChanges().forEach(async (change) => {
-    if (change.type === 'modified') {
-      const newData = change.doc.data();
-      const oldData = change.oldIndex !== -1 ? snapshot.docs[change.oldIndex].data() : {};
+    try {
+      const userId = change.doc.id;
+      if (!userId) {
+        console.error('Invalid userId in users collection snapshot');
+        return;
+      }
+      const userData = change.doc.data();
+      const oneSignalId = userData.oneSignalId;
 
-      // Check if coins increased and it's not due to ad rewards
-      if (newData.coins > (oldData.coins || 0) && !newData.lastAdTime) {
-        const userId = change.doc.id;
-        const oneSignalId = newData.oneSignalId;
-        if (oneSignalId) {
-          const message = await generateNotificationMessage('coin_purchase');
-          await sendNotification(message, null, oneSignalId);
-          console.log(`Coin purchase notification sent to user ${userId}`);
-        } else {
-          console.error(`No oneSignalId found for user ${userId}`);
+      // Handle coin purchases
+      if (change.type === 'modified') {
+        const oldData = change.oldIndex !== -1 ? snapshot.docs[change.oldIndex].data() : {};
+        if (userData.coins > (oldData.coins || 0) && !userData.lastAdTime) {
+          if (oneSignalId) {
+            const message = await generateNotificationMessage('coin_purchase');
+            await sendNotification(message, null, oneSignalId);
+            console.log(`Coin purchase notification sent to user ${userId}`);
+          } else {
+            console.error(`No oneSignalId found for user ${userId}`);
+          }
         }
       }
-    }
-  });
-});
 
-// Firestore listener and scheduler for ad cooldown completion
-db.collection('users').onSnapshot((snapshot) => {
-  snapshot.docChanges().forEach((change) => {
-    if (change.type === 'added' || change.type === 'modified') {
-      const userData = change.doc.data();
-      const userId = change.doc.id;
-      const oneSignalId = userData.oneSignalId;
-      const cooldownEndTime = userData.adCooldownEndTime;
-
-      if (cooldownEndTime && oneSignalId) {
+      // Handle cooldown completion
+      if ((change.type === 'added' || change.type === 'modified') && userData.adCooldownEndTime && oneSignalId) {
         const now = Date.now();
+        const cooldownEndTime = userData.adCooldownEndTime;
         const timeUntilCooldownEnds = cooldownEndTime - now;
 
         if (timeUntilCooldownEnds > 0 && timeUntilCooldownEnds < 24 * 60 * 60 * 1000) { // Only schedule if within 24 hours
@@ -288,6 +295,8 @@ db.collection('users').onSnapshot((snapshot) => {
           }, timeUntilCooldownEnds);
         }
       }
+    } catch (error) {
+      console.error('Error processing users snapshot:', error.message);
     }
   });
 });
