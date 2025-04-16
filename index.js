@@ -44,28 +44,31 @@ function isValidOneSignalId(id) {
   return typeof id === 'string' && uuidRegex.test(id);
 }
 
-// Generate notification message with a flirty, personal tone
+// Generate notification message with varied tones
 async function generateNotificationMessage(type = 'ad', userId = null) {
   try {
     let prompt;
+    const tones = ['motivational', 'professional', 'funny', 'shy', 'high-dopamine'];
+    const randomTone = tones[Math.floor(Math.random() * tones.length)];
+
     switch (type) {
       case 'ad':
-        prompt = 'Generate a shy, flirty push notification (max 50 chars) from a girlfriend/boyfriend to an Indian user, motivating them to watch ads for coins in Vidalyzer to grow YouTube/Instagram, e.g., "Hey love, watch ads for me? 😳💕"';
+        prompt = `Generate a ${randomTone} push notification (max 50 chars) for an Indian Vidalyzer user to watch ads for coins to grow YouTube/Instagram. Examples: Motivational: "Rise & grind! Watch ads! 🎯", Professional: "Boost growth with ads now.", Funny: "Ads or no coins, lol! 😂", Shy: "Pls watch ads, love? 😳💕", High-Dopamine: "Ads = COINS BOOM! 🎉"`;
         break;
       case 'app':
-        prompt = 'Generate a shy, flirty push notification (max 50 chars) from a girlfriend/boyfriend to an Indian user, encouraging daily Vidalyzer use for YouTube/Instagram growth, e.g., "Miss u! Use Vidalyzer, pls? 🥰"';
+        prompt = `Generate a ${randomTone} push notification (max 50 chars) for an Indian Vidalyzer user to use the app daily for YouTube/Instagram growth. Examples: Motivational: "Shine daily with Vidalyzer! 🌟", Professional: "Optimize daily with Vidalyzer.", Funny: "Use it or lose it, haha! 😄", Shy: "Miss u! Use Vidalyzer? 🥰", High-Dopamine: "App time = GROWTH RUSH! 🔥"`;
         break;
       case 'subscription':
-        prompt = 'Generate a shy, flirty push notification (max 50 chars) from a girlfriend/boyfriend to an Indian user, celebrating a new Vidalyzer subscription, e.g., "Wow, premium! Proud of u! 😘"';
+        prompt = `Generate a ${randomTone} push notification (max 50 chars) for an Indian Vidalyzer user celebrating a new subscription. Examples: Motivational: "You’re a star now! 🚀", Professional: "Congrats on your subscription.", Funny: "VIP status, nice one! 😂", Shy: "Wow, premium! Proud of u! 😘", High-Dopamine: "SUBSCRIBE WIN! 🎊💥"`;
         break;
       case 'coin_purchase':
-        prompt = 'Generate a shy, flirty push notification (max 50 chars) from a girlfriend/boyfriend to an Indian user, celebrating coin purchases in Vidalyzer, e.g., "Coins! You’re amazing! 😳💖"';
+        prompt = `Generate a ${randomTone} push notification (max 50 chars) for an Indian Vidalyzer user celebrating coin purchases. Examples: Motivational: "Keep winning with coins! 💪", Professional: "Great coin purchase today.", Funny: "Coins? You’re rich, lol! 😆", Shy: "Coins! You’re amazing! 😳💖", High-Dopamine: "COINS EXPLOSION! 🎆🎉"`;
         break;
       case 'cooldown':
-        prompt = 'Generate a shy, flirty push notification (max 50 chars) from a girlfriend/boyfriend to an Indian user, noting ad-watch cooldown is over in Vidalyzer, e.g., "Cooldown over, love! Ads? 😘"';
+        prompt = `Generate a ${randomTone} push notification (max 50 chars) for an Indian Vidalyzer user noting ad cooldown is over. Examples: Motivational: "Back in action! Watch ads! ⚡", Professional: "Cooldown over, resume ads.", Funny: "Cooldown done, ad time! 😂", Shy: "Cooldown over, love! Ads? 😘", High-Dopamine: "COOLDOWN OVER! ADS NOW! 🎵"`;
         break;
       default:
-        prompt = 'Generate a shy, flirty push notification (max 50 chars) from a girlfriend/boyfriend to an Indian user, motivating Vidalyzer use, e.g., "Hey cutie, grow with me? 🥰"';
+        prompt = `Generate a ${randomTone} push notification (max 50 chars) for an Indian Vidalyzer user to motivate app use. Examples: Motivational: "Grow big today! 🌍", Professional: "Enhance your strategy now.", Funny: "Get growing, silly! 😜", Shy: "Hey cutie, grow with me? 🥰", High-Dopamine: "GROWTH BLAST! 🚀🎊"`;
     }
     const response = await axios.post(
       'https://api.openai.com/v1/chat/completions',
@@ -85,20 +88,14 @@ async function generateNotificationMessage(type = 'ad', userId = null) {
     return message.length <= 50 ? message : message.substring(0, 50).trim() + '…';
   } catch (error) {
     console.error(`Error generating notification for type ${type}:`, error.response ? error.response.data : error.message);
-    switch (type) {
-      case 'ad':
-        return 'Hey love, watch ads for me? 😳💕';
-      case 'app':
-        return 'Miss u! Use Vidalyzer, pls? 🥰';
-      case 'subscription':
-        return 'Wow, premium! Proud of u! 😘';
-      case 'coin_purchase':
-        return 'Coins! You’re amazing! 😳💖';
-      case 'cooldown':
-        return 'Cooldown over, love! Ads? 😘';
-      default:
-        return 'Hey cutie, grow with me? 🥰';
-    }
+    const fallbacks = {
+      ad: ['Rise & grind! Watch ads! 🎯', 'Boost growth with ads now.', 'Ads or no coins, lol! 😂', 'Pls watch ads, love? 😳💕', 'Ads = COINS BOOM! 🎉'],
+      app: ['Shine daily with Vidalyzer! 🌟', 'Optimize daily with Vidalyzer.', 'Use it or lose it, haha! 😄', 'Miss u! Use Vidalyzer? 🥰', 'App time = GROWTH RUSH! 🔥'],
+      subscription: ['You’re a star now! 🚀', 'Congrats on your subscription.', 'VIP status, nice one! 😂', 'Wow, premium! Proud of u! 😘', 'SUBSCRIBE WIN! 🎊💥'],
+      coin_purchase: ['Keep winning with coins! 💪', 'Great coin purchase today.', 'Coins? You’re rich, lol! 😆', 'Coins! You’re amazing! 😳💖', 'COINS EXPLOSION! 🎆🎉'],
+      cooldown: ['Back in action! Watch ads! ⚡', 'Cooldown over, resume ads.', 'Cooldown done, ad time! 😂', 'Cooldown over, love! Ads? 😘', 'COOLDOWN OVER! ADS NOW! 🎵'],
+    };
+    return fallbacks[type] ? fallbacks[type][Math.floor(Math.random() * fallbacks[type].length)] : 'Hey cutie, grow with me? 🥰';
   }
 }
 
@@ -113,7 +110,7 @@ async function sendNotification(message, target = 'All', oneSignalId = null) {
     const notificationData = {
       app_id: ONESIGNAL_APP_ID,
       contents: { en: message },
-      headings: { en: 'Your Sweet Vid Push! 💕' },
+      headings: { en: 'Vidalyzer Boost! 🎉' }, // Updated heading to match app branding
     };
 
     if (oneSignalId) {
