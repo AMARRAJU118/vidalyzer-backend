@@ -66,7 +66,7 @@ async function generateNotificationMessage(type = 'ad', userId = null) {
     );
     return response.data.choices[0].message.content.trim();
   } catch (error) {
-    console.error('Error generating notification:', error.response ? error.response.data : error.message);
+    console.error(`Error generating notification for type ${type}:`, error.response ? error.response.data : error.message);
     switch (type) {
       case 'ad':
         return 'Boost YouTube—watch ads! 🎉';
@@ -87,6 +87,10 @@ async function generateNotificationMessage(type = 'ad', userId = null) {
 // Function to send push notification via OneSignal to a specific user or segment
 async function sendNotification(message, target = 'All', oneSignalId = null) {
   try {
+    if (!ONESIGNAL_API_KEY) {
+      console.error('ONESIGNAL_API_KEY is not set');
+      return;
+    }
     const notificationData = {
       app_id: ONESIGNAL_APP_ID,
       contents: { en: message },
@@ -99,7 +103,7 @@ async function sendNotification(message, target = 'All', oneSignalId = null) {
       notificationData.included_segments = [target]; // Target segment
     }
 
-    await axios.post(
+    const response = await axios.post(
       'https://onesignal.com/api/v1/notifications',
       notificationData,
       {
@@ -109,7 +113,7 @@ async function sendNotification(message, target = 'All', oneSignalId = null) {
         }
       }
     );
-    console.log(`Notification sent to ${oneSignalId || target}: ${message}`);
+    console.log(`Notification sent to ${oneSignalId || target}: ${message}`, response.data);
   } catch (error) {
     console.error('Error sending notification:', error.response ? error.response.data : error.message);
   }
@@ -124,8 +128,9 @@ async function checkAdStatus(userId) {
   const userRef = db.collection('users').doc(userId);
   const doc = await userRef.get();
   if (!doc.exists) {
-    await userRef.set({ adsWatched: 0, lastAdTime: null, coins: 0, rewards: [] }, { merge: true });
-    return { adsWatched: 0, lastAdTime: null, coins: 0, rewards: [] };
+    await userRef.set({ adsWatched: 0, lastAdTime: null, coins: 0, rewards: [], oneSignalId: '' }, { merge: true });
+    console.log(`Initialized user document for ${userId}`);
+    return { adsWatched: 0, lastAdTime: null, coins: 0, rewards: [], oneSignalId: '' };
   }
   return doc.data();
 }
@@ -229,24 +234,30 @@ app.post('/buy-feature', async (req, res) => {
 // Firestore listener for new subscriptions
 db.collection('Premium').onSnapshot((snapshot) => {
   snapshot.docChanges().forEach(async (change) => {
-    if (change.type === 'added' || (change.type === 'modified' && change.doc.data().isPremiumUser)) {
-      const userId = change.doc.data().userId;
+    try {
+      const data = change.doc.data();
+      const userId = data.userId;
       if (!userId) {
-        console.error('Invalid userId in Premium collection snapshot');
+        console.error('Invalid or missing userId in Premium collection snapshot:', change.doc.id, data);
         return;
       }
-      const subscriptionType = change.doc.data().subscriptionType;
+      if (change.type === 'added' || (change.type === 'modified' && data.isPremiumUser)) {
+        const subscriptionType = data.subscriptionType || 'unknown';
+        console.log(`Processing subscription for user ${userId}, type: ${subscriptionType}`);
 
-      // Fetch user's oneSignalId from users collection
-      const userDoc = await db.collection('users').doc(userId).get();
-      if (userDoc.exists && userDoc.data().oneSignalId) {
-        const oneSignalId = userDoc.data().oneSignalId;
-        const message = await generateNotificationMessage('subscription');
-        await sendNotification(message, null, oneSignalId);
-        console.log(`Subscription notification sent to user ${userId} for ${subscriptionType}`);
-      } else {
-        console.error(`No oneSignalId found for user ${userId}`);
+        // Fetch user's oneSignalId from users collection
+        const userDoc = await db.collection('users').doc(userId).get();
+        if (userDoc.exists && userDoc.data().oneSignalId) {
+          const oneSignalId = userDoc.data().oneSignalId;
+          const message = await generateNotificationMessage('subscription');
+          await sendNotification(message, null, oneSignalId);
+          console.log(`Subscription notification sent to user ${userId} for ${subscriptionType}`);
+        } else {
+          console.warn(`No oneSignalId found for user ${userId} or user document missing`);
+        }
       }
+    } catch (error) {
+      console.error('Error in Premium snapshot listener:', error.message);
     }
   });
 });
@@ -257,7 +268,7 @@ db.collection('users').onSnapshot((snapshot) => {
     try {
       const userId = change.doc.id;
       if (!userId) {
-        console.error('Invalid userId in users collection snapshot');
+        console.error('Invalid userId in users collection snapshot:', change.doc.id);
         return;
       }
       const userData = change.doc.data();
@@ -272,7 +283,7 @@ db.collection('users').onSnapshot((snapshot) => {
             await sendNotification(message, null, oneSignalId);
             console.log(`Coin purchase notification sent to user ${userId}`);
           } else {
-            console.error(`No oneSignalId found for user ${userId}`);
+            console.warn(`No oneSignalId found for user ${userId} for coin purchase`);
           }
         }
       }
@@ -284,6 +295,7 @@ db.collection('users').onSnapshot((snapshot) => {
         const timeUntilCooldownEnds = cooldownEndTime - now;
 
         if (timeUntilCooldownEnds > 0 && timeUntilCooldownEnds < 24 * 60 * 60 * 1000) { // Only schedule if within 24 hours
+          console.log(`Scheduling cooldown notification for user ${userId} in ${timeUntilCooldownEnds / 1000} seconds`);
           setTimeout(async () => {
             // Verify cooldown is still complete
             const userDoc = await db.collection('users').doc(userId).get();
@@ -291,6 +303,8 @@ db.collection('users').onSnapshot((snapshot) => {
               const message = await generateNotificationMessage('cooldown');
               await sendNotification(message, null, oneSignalId);
               console.log(`Cooldown completion notification sent to user ${userId}`);
+            } else {
+              console.log(`Cooldown not yet complete for user ${userId} or user data missing`);
             }
           }, timeUntilCooldownEnds);
         }
