@@ -13,8 +13,8 @@ initializeApp({
   credential: require('firebase-admin').credential.cert({
     projectId: process.env.FIREBASE_PROJECT_ID,
     clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-    privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
-  })
+    privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+  }),
 });
 const db = getFirestore();
 
@@ -72,21 +72,19 @@ async function generateNotificationMessage(type = 'ad', userId = null) {
       {
         model: 'gpt-3.5-turbo',
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 60
+        max_tokens: 60,
       },
       {
         headers: {
-          'Authorization': `Bearer ${OPENAI_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
       }
     );
     const message = response.data.choices[0].message.content.trim();
-    // Ensure message fits within 50 characters
     return message.length <= 50 ? message : message.substring(0, 50).trim() + '…';
   } catch (error) {
     console.error(`Error generating notification for type ${type}:`, error.response ? error.response.data : error.message);
-    // Fallback with flirty, personalized defaults
     switch (type) {
       case 'ad':
         return 'Hey love, watch ads for me? 😳💕';
@@ -115,7 +113,7 @@ async function sendNotification(message, target = 'All', oneSignalId = null) {
     const notificationData = {
       app_id: ONESIGNAL_APP_ID,
       contents: { en: message },
-      headings: { en: 'Your Sweet Vid Push! 💕' } // Updated heading for flirty vibe
+      headings: { en: 'Your Sweet Vid Push! 💕' },
     };
 
     if (oneSignalId) {
@@ -129,9 +127,9 @@ async function sendNotification(message, target = 'All', oneSignalId = null) {
       notificationData,
       {
         headers: {
-          'Authorization': `Basic ${ONESIGNAL_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
+          Authorization: `Basic ${ONESIGNAL_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
       }
     );
     console.log(`Notification sent successfully to ${oneSignalId || target}: ${message}`, response.data);
@@ -151,7 +149,10 @@ async function checkAdStatus(userId) {
   const userRef = db.collection('users').doc(userId);
   const doc = await userRef.get();
   if (!doc.exists) {
-    await userRef.set({ adsWatched: 0, lastAdTime: null, coins: 0, rewards: [], oneSignalId: '' }, { merge: true });
+    await userRef.set(
+      { adsWatched: 0, lastAdTime: null, coins: 0, rewards: [], oneSignalId: '' },
+      { merge: true }
+    );
     console.log(`Initialized user document for ${userId}`);
     return { adsWatched: 0, lastAdTime: null, coins: 0, rewards: [], oneSignalId: '' };
   }
@@ -174,7 +175,7 @@ async function awardCoins(userId) {
       lastAdTime: new Date().toISOString(),
       adCooldownEndTime: Date.now() + COOLDOWN_MINUTES * 60 * 1000,
       coins: newCoins,
-      rewards
+      rewards,
     });
     return { coins, message: `Wow! Earned ${coins} coins to grow! 🎉` };
   }
@@ -185,7 +186,7 @@ async function awardCoins(userId) {
 const istOffset = 5.5 * 60 * 60 * 1000;
 const getIstTime = () => new Date(Date.now() + istOffset).toLocaleString('en-US', { timeZone: 'Asia/Kolkata' });
 
-cron.schedule('0 * * * *', async () => { // Runs every hour
+cron.schedule('0 * * * *', async () => {
   console.log('Scheduling notifications at', getIstTime());
   const adMessage = await generateNotificationMessage('ad');
   const success = await sendNotification(adMessage);
@@ -203,7 +204,7 @@ cron.schedule('0 * * * *', async () => { // Runs every hour
   }
 }, {
   scheduled: true,
-  timezone: 'Asia/Kolkata'
+  timezone: 'Asia/Kolkata',
 });
 
 // API endpoint to track ad watching
@@ -219,7 +220,7 @@ app.post('/watch-ad', async (req, res) => {
 
   if (userData.adsWatched < ADS_TO_WATCH && cooldownElapsed) {
     await db.collection('users').doc(userId).update({
-      adsWatched: userData.adsWatched + 1
+      adsWatched: userData.adsWatched + 1,
     });
     res.send({ message: `Ad ${userData.adsWatched + 1}/10 watched! Grow soon!` });
   } else if (!cooldownElapsed) {
@@ -252,7 +253,7 @@ app.post('/buy-feature', async (req, res) => {
   if (userData.coins >= cost) {
     await db.collection('users').doc(userId).update({
       coins: userData.coins - cost,
-      rewards: [...(userData.rewards || []), { type: feature, amount: quantity, timestamp: new Date().toISOString() }].slice(-5)
+      rewards: [...(userData.rewards || []), { type: feature, amount: quantity, timestamp: new Date().toISOString() }].slice(-5),
     });
     res.send({ message: `Bought ${quantity} ${feature} to skyrocket growth!` });
   } else {
@@ -317,7 +318,11 @@ db.collection('Premium').onSnapshot((snapshot) => {
           const success = await sendNotification(message, null, oneSignalId);
           console.log(`Subscription notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}`);
         } else {
-          console.warn(`No valid oneSignalId found for user ${userId}`, { userId, exists: userDoc.exists, oneSignalId: userDoc.data()?.oneSignalId });
+          console.warn(`No valid oneSignalId found for user ${userId}`, {
+            userId,
+            exists: userDoc.exists,
+            oneSignalId: userDoc.data()?.oneSignalId,
+          });
         }
       }
     } catch (error) {
@@ -372,10 +377,14 @@ db.collection('users').onSnapshot((snapshot) => {
 
 // Start server with health check
 app.get('/', (req, res) => res.send('Vidalyzer Backend Running'));
+app.get('/ping', (req, res) => res.send('OK')); // Health check endpoint
 app.listen(port, () => console.log(`Server running on port ${port} at ${getIstTime()}`));
 
 // Keep server alive (ping every 5 minutes)
+const RAILWAY_URL = process.env.RAILWAY_URL || 'https://railway.com/project/0cf72e37-c877-4748-912c-3d5957c2b9b4?environmentId=d94acf4a-985d-406b-9e72-3696f6bcca79'; // Set via Railway env or replace manually
 setInterval(() => {
   console.log(`Pinging self at ${getIstTime()} to keep instance alive`);
-  axios.get(`http://localhost:${port}/`).catch(err => console.error('Ping failed:', err.message));
+  axios
+    .get(`${RAILWAY_URL}/ping`)
+    .catch((err) => console.error('Ping failed:', err.message));
 }, 5 * 60 * 1000);
