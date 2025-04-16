@@ -27,6 +27,9 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const ADS_TO_WATCH = 10;
 const COOLDOWN_MINUTES = 15;
 
+// Track processed snapshots to avoid duplicates
+const processedSnapshots = new Set();
+
 // Function to generate engaging, growth-motivated notification message using ChatGPT
 async function generateNotificationMessage(type = 'ad', userId = null) {
   try {
@@ -256,6 +259,14 @@ app.post('/update-onesignal', async (req, res) => {
 db.collection('Premium').onSnapshot((snapshot) => {
   snapshot.docChanges().forEach(async (change) => {
     try {
+      const snapshotId = `${change.doc.id}:${change.type}:${Date.now()}`;
+      if (processedSnapshots.has(snapshotId)) {
+        console.log(`Skipping duplicate snapshot for Premium doc ${change.doc.id}, type: ${change.type}`);
+        return;
+      }
+      processedSnapshots.add(snapshotId);
+      setTimeout(() => processedSnapshots.delete(snapshotId), 60000); // Clear after 1 minute
+
       const data = change.doc.data();
       let userId = data.userId || change.doc.id; // Fallback to doc ID
       if (!userId) {
@@ -280,7 +291,7 @@ db.collection('Premium').onSnapshot((snapshot) => {
           const success = await sendNotification(message, null, oneSignalId);
           console.log(`Subscription notification ${success ? 'sent' : 'failed'} to user ${userId} for ${subscriptionType}`);
         } else {
-          console.warn(`No oneSignalId found for user ${userId} or user document missing`);
+          console.warn(`No oneSignalId found for user ${userId} or user document missing`, { userId, docExists: userDoc.exists });
         }
       }
     } catch (error) {
