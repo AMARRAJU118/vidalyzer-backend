@@ -44,28 +44,28 @@ function isValidOneSignalId(id) {
   return typeof id === 'string' && uuidRegex.test(id);
 }
 
-// Generate notification message
+// Generate notification message with a flirty, personal tone
 async function generateNotificationMessage(type = 'ad', userId = null) {
   try {
     let prompt;
     switch (type) {
       case 'ad':
-        prompt = 'Generate a short, fun, dopamine-boosting push notification (max 50 characters) to motivate an Indian user to watch ads for coins in Vidalyzer to grow their YouTube/Instagram, e.g., "Hey, boost YouTube—watch ads! 🎉"';
+        prompt = 'Generate a shy, flirty push notification (max 50 chars) from a girlfriend/boyfriend to an Indian user, motivating them to watch ads for coins in Vidalyzer to grow YouTube/Instagram, e.g., "Hey love, watch ads for me? 😳💕"';
         break;
       case 'app':
-        prompt = 'Generate a short, fun, dopamine-boosting push notification (max 50 characters) to motivate an Indian user to use Vidalyzer daily to grow their YouTube/Instagram, e.g., "Morning champ! Grow Insta now! 😍" and feel like a friend encouraging growth';
+        prompt = 'Generate a shy, flirty push notification (max 50 chars) from a girlfriend/boyfriend to an Indian user, encouraging daily Vidalyzer use for YouTube/Instagram growth, e.g., "Miss u! Use Vidalyzer, pls? 🥰"';
         break;
       case 'subscription':
-        prompt = 'Generate a short, fun, dopamine-boosting push notification (max 50 characters) to celebrate an Indian user’s new Vidalyzer subscription, e.g., "Welcome to Premium! Skyrocket growth! 🎉"';
+        prompt = 'Generate a shy, flirty push notification (max 50 chars) from a girlfriend/boyfriend to an Indian user, celebrating a new Vidalyzer subscription, e.g., "Wow, premium! Proud of u! 😘"';
         break;
       case 'coin_purchase':
-        prompt = 'Generate a short, fun, dopamine-boosting push notification (max 50 characters) to celebrate an Indian user buying coins in Vidalyzer, e.g., "Coins added! Boost your channels! 🚀"';
+        prompt = 'Generate a shy, flirty push notification (max 50 chars) from a girlfriend/boyfriend to an Indian user, celebrating coin purchases in Vidalyzer, e.g., "Coins! You’re amazing! 😳💖"';
         break;
       case 'cooldown':
-        prompt = 'Generate a short, fun, dopamine-boosting push notification (max 50 characters) to notify an Indian user that their ad-watch cooldown in Vidalyzer is over, e.g., "Cooldown done! Watch ads to grow! 🎥"';
+        prompt = 'Generate a shy, flirty push notification (max 50 chars) from a girlfriend/boyfriend to an Indian user, noting ad-watch cooldown is over in Vidalyzer, e.g., "Cooldown over, love! Ads? 😘"';
         break;
       default:
-        prompt = 'Generate a short, fun, dopamine-boosting push notification (max 50 characters) to motivate an Indian user to use Vidalyzer, e.g., "Grow Insta today! 😍"';
+        prompt = 'Generate a shy, flirty push notification (max 50 chars) from a girlfriend/boyfriend to an Indian user, motivating Vidalyzer use, e.g., "Hey cutie, grow with me? 🥰"';
     }
     const response = await axios.post(
       'https://api.openai.com/v1/chat/completions',
@@ -81,22 +81,25 @@ async function generateNotificationMessage(type = 'ad', userId = null) {
         }
       }
     );
-    return response.data.choices[0].message.content.trim();
+    const message = response.data.choices[0].message.content.trim();
+    // Ensure message fits within 50 characters
+    return message.length <= 50 ? message : message.substring(0, 50).trim() + '…';
   } catch (error) {
     console.error(`Error generating notification for type ${type}:`, error.response ? error.response.data : error.message);
+    // Fallback with flirty, personalized defaults
     switch (type) {
       case 'ad':
-        return 'Boost YouTube—watch ads! 🎉';
+        return 'Hey love, watch ads for me? 😳💕';
       case 'app':
-        return 'Grow Insta today! 😍';
+        return 'Miss u! Use Vidalyzer, pls? 🥰';
       case 'subscription':
-        return 'Welcome to Premium! Skyrocket growth! 🎉';
+        return 'Wow, premium! Proud of u! 😘';
       case 'coin_purchase':
-        return 'Coins added! Boost your channels! 🚀';
+        return 'Coins! You’re amazing! 😳💖';
       case 'cooldown':
-        return 'Cooldown done! Watch ads to grow! 🎥';
+        return 'Cooldown over, love! Ads? 😘';
       default:
-        return 'Grow with Vidalyzer now! 🚀';
+        return 'Hey cutie, grow with me? 🥰';
     }
   }
 }
@@ -112,7 +115,7 @@ async function sendNotification(message, target = 'All', oneSignalId = null) {
     const notificationData = {
       app_id: ONESIGNAL_APP_ID,
       contents: { en: message },
-      headings: { en: 'Vidalyzer Growth!' }
+      headings: { en: 'Your Sweet Vid Push! 💕' } // Updated heading for flirty vibe
     };
 
     if (oneSignalId) {
