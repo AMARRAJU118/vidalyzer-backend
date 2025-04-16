@@ -18,7 +18,7 @@ initializeApp({
 });
 const db = getFirestore();
 
-// Environment variables with stricter validation
+// Environment variables with validation
 const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID || 'd2288872-b12c-4974-af8c-e98665ea2564';
 const ONESIGNAL_API_KEY = process.env.ONESIGNAL_API_KEY;
 if (!ONESIGNAL_API_KEY) {
@@ -48,27 +48,27 @@ function isValidOneSignalId(id) {
 async function generateNotificationMessage(type = 'ad', userId = null) {
   try {
     let prompt;
-    const tones = ['motivational', 'professional', 'funny', 'shy', 'high-dopamine'];
+    const tones = ['friend', 'girlfriend', 'boyfriend'];
     const randomTone = tones[Math.floor(Math.random() * tones.length)];
 
     switch (type) {
       case 'ad':
-        prompt = `Generate a ${randomTone} push notification (max 50 chars) for an Indian Vidalyzer user to watch ads for coins to grow YouTube/Instagram. Examples: Motivational: "Rise & grind! Watch ads! 🎯", Professional: "Boost growth with ads now.", Funny: "Ads or no coins, lol! 😂", Shy: "Pls watch ads, love? 😳💕", High-Dopamine: "Ads = COINS BOOM! 🎉"`;
-        break;
-      case 'app':
-        prompt = `Generate a ${randomTone} push notification (max 50 chars) for an Indian Vidalyzer user to use the app daily for YouTube/Instagram growth. Examples: Motivational: "Shine daily with Vidalyzer! 🌟", Professional: "Optimize daily with Vidalyzer.", Funny: "Use it or lose it, haha! 😄", Shy: "Miss u! Use Vidalyzer? 🥰", High-Dopamine: "App time = GROWTH RUSH! 🔥"`;
-        break;
-      case 'subscription':
-        prompt = `Generate a ${randomTone} push notification (max 50 chars) for an Indian Vidalyzer user celebrating a new subscription. Examples: Motivational: "You’re a star now! 🚀", Professional: "Congrats on your subscription.", Funny: "VIP status, nice one! 😂", Shy: "Wow, premium! Proud of u! 😘", High-Dopamine: "SUBSCRIBE WIN! 🎊💥"`;
-        break;
-      case 'coin_purchase':
-        prompt = `Generate a ${randomTone} push notification (max 50 chars) for an Indian Vidalyzer user celebrating coin purchases. Examples: Motivational: "Keep winning with coins! 💪", Professional: "Great coin purchase today.", Funny: "Coins? You’re rich, lol! 😆", Shy: "Coins! You’re amazing! 😳💖", High-Dopamine: "COINS EXPLOSION! 🎆🎉"`;
+        prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user to watch ads for coins to grow YouTube/Instagram. Examples: Friend: "Yo, watch ads & boost your Insta!", Girlfriend: "Babe, ads = coins for your reels! 😘", Boyfriend: "Hey, watch ads to grow big! 💪"`;
         break;
       case 'cooldown':
-        prompt = `Generate a ${randomTone} push notification (max 50 chars) for an Indian Vidalyzer user noting ad cooldown is over. Examples: Motivational: "Back in action! Watch ads! ⚡", Professional: "Cooldown over, resume ads.", Funny: "Cooldown done, ad time! 😂", Shy: "Cooldown over, love! Ads? 😘", High-Dopamine: "COOLDOWN OVER! ADS NOW! 🎵"`;
+        prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user noting ad cooldown is over. Examples: Friend: "Cooldown done! Watch ads now! 😎", Girlfriend: "Sweetie, ads are back! Go for it! 💖", Boyfriend: "Cooldown over, champ! Ads time! 🏆"`;
+        break;
+      case 'motivational':
+        prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user to motivate daily app use or content creation for YouTube/Instagram SEO. Examples: Friend: "Uploaded a vid today? Use Vidalyzer! 🚀", Girlfriend: "Hey love, post a reel & boost SEO! 😍", Boyfriend: "Man, use Vidalyzer for epic YouTube growth! 🔥"`;
+        break;
+      case 'subscription':
+        prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user celebrating a new subscription. Examples: Friend: "Yo, you're premium now! Rock it! 🎉", Girlfriend: "OMG babe, premium vibes! So proud! 😘", Boyfriend: "Premium status, bro! You're a star! 🌟"`;
+        break;
+      case 'coin_purchase':
+        prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user celebrating coin purchases. Examples: Friend: "Nice! Coins for your growth! 🙌", Girlfriend: "Sweetie, those coins are 🔥! Love it!", Boyfriend: "Coins grabbed, dude! Let's grow! 💪"`;
         break;
       default:
-        prompt = `Generate a ${randomTone} push notification (max 50 chars) for an Indian Vidalyzer user to motivate app use. Examples: Motivational: "Grow big today! 🌍", Professional: "Enhance your strategy now.", Funny: "Get growing, silly! 😜", Shy: "Hey cutie, grow with me? 🥰", High-Dopamine: "GROWTH BLAST! 🚀🎊"`;
+        prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user to motivate app use. Examples: Friend: "Let's grow your channel today! 😎", Girlfriend: "Hey cutie, boost your reels now! 🥰", Boyfriend: "Get on Vidalyzer, king! Skyrocket! 🚀"`;
     }
     const response = await axios.post(
       'https://api.openai.com/v1/chat/completions',
@@ -89,13 +89,13 @@ async function generateNotificationMessage(type = 'ad', userId = null) {
   } catch (error) {
     console.error(`Error generating notification for type ${type}:`, error.response ? error.response.data : error.message);
     const fallbacks = {
-      ad: ['Rise & grind! Watch ads! 🎯', 'Boost growth with ads now.', 'Ads or no coins, lol! 😂', 'Pls watch ads, love? 😳💕', 'Ads = COINS BOOM! 🎉'],
-      app: ['Shine daily with Vidalyzer! 🌟', 'Optimize daily with Vidalyzer.', 'Use it or lose it, haha! 😄', 'Miss u! Use Vidalyzer? 🥰', 'App time = GROWTH RUSH! 🔥'],
-      subscription: ['You’re a star now! 🚀', 'Congrats on your subscription.', 'VIP status, nice one! 😂', 'Wow, premium! Proud of u! 😘', 'SUBSCRIBE WIN! 🎊💥'],
-      coin_purchase: ['Keep winning with coins! 💪', 'Great coin purchase today.', 'Coins? You’re rich, lol! 😆', 'Coins! You’re amazing! 😳💖', 'COINS EXPLOSION! 🎆🎉'],
-      cooldown: ['Back in action! Watch ads! ⚡', 'Cooldown over, resume ads.', 'Cooldown done, ad time! 😂', 'Cooldown over, love! Ads? 😘', 'COOLDOWN OVER! ADS NOW! 🎵'],
+      ad: ['Yo, watch ads & boost your Insta!', 'Babe, ads = coins for your reels! 😘', 'Hey, watch ads to grow big! 💪'],
+      cooldown: ['Cooldown done! Watch ads now! 😎', 'Sweetie, ads are back! Go for it! 💖', 'Cooldown over, champ! Ads time! 🏆'],
+      motivational: ['Uploaded a vid today? Use Vidalyzer! 🚀', 'Hey love, post a reel & boost SEO! 😍', 'Man, use Vidalyzer for epic YouTube growth! 🔥'],
+      subscription: ['Yo, you’re premium now! Rock it! 🎉', 'OMG babe, premium vibes! So proud! 😘', 'Premium status, bro! You’re a star! 🌟'],
+      coin_purchase: ['Nice! Coins for your growth! 🙌', 'Sweetie, those coins are 🔥! Love it!', 'Coins grabbed, dude! Let’s grow! 💪'],
     };
-    return fallbacks[type] ? fallbacks[type][Math.floor(Math.random() * fallbacks[type].length)] : 'Hey cutie, grow with me? 🥰';
+    return fallbacks[type] ? fallbacks[type][Math.floor(Math.random() * fallbacks[type].length)] : 'Hey cutie, boost your reels now! 🥰';
   }
 }
 
@@ -110,7 +110,7 @@ async function sendNotification(message, target = 'All', oneSignalId = null) {
     const notificationData = {
       app_id: ONESIGNAL_APP_ID,
       contents: { en: message },
-      headings: { en: 'Vidalyzer Boost! 🎉' }, // Updated heading to match app branding
+      headings: { en: 'Vidalyzer Boost! 🎉' },
     };
 
     if (oneSignalId) {
@@ -147,11 +147,11 @@ async function checkAdStatus(userId) {
   const doc = await userRef.get();
   if (!doc.exists) {
     await userRef.set(
-      { adsWatched: 0, lastAdTime: null, coins: 0, rewards: [], oneSignalId: '' },
+      { adsWatched: 0, lastAdTime: null, coins: 0, recentRewards: [], oneSignalId: '' },
       { merge: true }
     );
     console.log(`Initialized user document for ${userId}`);
-    return { adsWatched: 0, lastAdTime: null, coins: 0, rewards: [], oneSignalId: '' };
+    return { adsWatched: 0, lastAdTime: null, coins: 0, recentRewards: [], oneSignalId: '' };
   }
   return doc.data();
 }
@@ -163,46 +163,62 @@ async function awardCoins(userId) {
   if (userData.adsWatched >= ADS_TO_WATCH) {
     const coins = Math.floor(Math.random() * (25 - 10 + 1)) + 10;
     const newCoins = userData.coins + coins;
-    const rewards = userData.rewards || [];
-    rewards.push({ type: 'coins', amount: coins, timestamp: new Date().toISOString() });
-    if (rewards.length > 5) rewards.shift();
+    const rewards = userData.recentRewards || [];
+    rewards.unshift({ name: `${coins} Coins`, timestamp: new Date().toISOString() });
+    if (rewards.length > 5) rewards.pop();
 
     await db.collection('users').doc(userId).update({
       adsWatched: 0,
       lastAdTime: new Date().toISOString(),
       adCooldownEndTime: Date.now() + COOLDOWN_MINUTES * 60 * 1000,
       coins: newCoins,
-      rewards,
+      recentRewards: rewards,
     });
     return { coins, message: `Wow! Earned ${coins} coins to grow! 🎉` };
   }
   return { coins: 0, message: 'Watch 10 ads to grow your channels!' };
 }
 
-// Schedule notifications for IST (every hour for testing)
+// Schedule notifications for IST (2-3 ad notifications daily, motivational notifications)
 const istOffset = 5.5 * 60 * 60 * 1000;
 const getIstTime = () => new Date(Date.now() + istOffset).toLocaleString('en-US', { timeZone: 'Asia/Kolkata' });
 
-cron.schedule('0 * * * *', async () => {
-  console.log('Scheduling notifications at', getIstTime());
+// Schedule ad notifications at specific IST times: 10 AM, 2 PM, 6 PM
+cron.schedule('0 10 * * *', async () => {
+  console.log('Scheduling ad notification at', getIstTime());
   const adMessage = await generateNotificationMessage('ad');
-  const success = await sendNotification(adMessage);
+  const success = await sendNotification(adMessage, 'Active Users');
   console.log(`Ad notification ${success ? 'sent' : 'failed'} at ${getIstTime()}: ${adMessage}`);
+}, { scheduled: true, timezone: 'Asia/Kolkata' });
 
-  const appMessage = await generateNotificationMessage('app');
-  const appSuccess = await sendNotification(appMessage, 'Active Users');
-  console.log(`App notification ${appSuccess ? 'sent' : 'failed'} at ${getIstTime()}: ${appMessage}`);
+cron.schedule('0 14 * * *', async () => {
+  console.log('Scheduling ad notification at', getIstTime());
+  const adMessage = await generateNotificationMessage('ad');
+  const success = await sendNotification(adMessage, 'Active Users');
+  console.log(`Ad notification ${success ? 'sent' : 'failed'} at ${getIstTime()}: ${adMessage}`);
+}, { scheduled: true, timezone: 'Asia/Kolkata' });
 
-  const utcHour = new Date().getUTCHours();
-  if ([16, 17, 18].includes(utcHour)) {
-    const extraAdMessage = await generateNotificationMessage('ad');
-    const extraSuccess = await sendNotification(extraAdMessage);
-    console.log(`Extra ad notification ${extraSuccess ? 'sent' : 'failed'} at ${getIstTime()}: ${extraAdMessage}`);
-  }
-}, {
-  scheduled: true,
-  timezone: 'Asia/Kolkata',
-});
+cron.schedule('0 18 * * *', async () => {
+  console.log('Scheduling ad notification at', getIstTime());
+  const adMessage = await generateNotificationMessage('ad');
+  const success = await sendNotification(adMessage, 'Active Users');
+  console.log(`Ad notification ${success ? 'sent' : 'failed'} at ${getIstTime()}: ${adMessage}`);
+}, { scheduled: true, timezone: 'Asia/Kolkata' });
+
+// Schedule motivational notifications at 9 AM and 4 PM
+cron.schedule('0 9 * * *', async () => {
+  console.log('Scheduling motivational notification at', getIstTime());
+  const motivationalMessage = await generateNotificationMessage('motivational');
+  const success = await sendNotification(motivationalMessage, 'Active Users');
+  console.log(`Motivational notification ${success ? 'sent' : 'failed'} at ${getIstTime()}: ${motivationalMessage}`);
+}, { scheduled: true, timezone: 'Asia/Kolkata' });
+
+cron.schedule('0 16 * * *', async () => {
+  console.log('Scheduling motivational notification at', getIstTime());
+  const motivationalMessage = await generateNotificationMessage('motivational');
+  const success = await sendNotification(motivationalMessage, 'Active Users');
+  console.log(`Motivational notification ${success ? 'sent' : 'failed'} at ${getIstTime()}: ${motivationalMessage}`);
+}, { scheduled: true, timezone: 'Asia/Kolkata' });
 
 // API endpoint to track ad watching
 app.post('/watch-ad', async (req, res) => {
@@ -250,7 +266,7 @@ app.post('/buy-feature', async (req, res) => {
   if (userData.coins >= cost) {
     await db.collection('users').doc(userId).update({
       coins: userData.coins - cost,
-      rewards: [...(userData.rewards || []), { type: feature, amount: quantity, timestamp: new Date().toISOString() }].slice(-5),
+      recentRewards: [...(userData.recentRewards || []), { name: `${quantity} ${feature}`, timestamp: new Date().toISOString() }].slice(-5),
     });
     res.send({ message: `Bought ${quantity} ${feature} to skyrocket growth!` });
   } else {
@@ -378,7 +394,7 @@ app.get('/ping', (req, res) => res.send('OK')); // Health check endpoint
 app.listen(port, () => console.log(`Server running on port ${port} at ${getIstTime()}`));
 
 // Keep server alive (ping every 5 minutes)
-const RAILWAY_URL = process.env.RAILWAY_URL || 'https://railway.com/project/0cf72e37-c877-4748-912c-3d5957c2b9b4?environmentId=d94acf4a-985d-406b-9e72-3696f6bcca79'; // Set via Railway env or replace manually
+const RAILWAY_URL = process.env.RAILWAY_URL || 'https://railway.com/project/0cf72e37-c877-4748-912c-3d5957c2b9b4?environmentId=d94acf4a-985d-406b-9e72-3696f6bcca79';
 setInterval(() => {
   console.log(`Pinging self at ${getIstTime()} to keep instance alive`);
   axios
