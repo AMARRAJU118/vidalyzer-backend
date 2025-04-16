@@ -5,10 +5,10 @@ const { initializeApp } = require('firebase-admin/app');
 const { getFirestore } = require('firebase-admin/firestore');
 
 const app = express();
-app.use(express.json()); // Parse JSON request bodies
-const port = process.env.PORT || 10000; // Use Render's PORT or default to 10000
+app.use(express.json());
+const port = process.env.PORT || 10000;
 
-// Firebase Admin SDK initialization with environment variables
+// Firebase Admin SDK initialization
 initializeApp({
   credential: require('firebase-admin').credential.cert({
     projectId: process.env.FIREBASE_PROJECT_ID,
@@ -27,10 +27,16 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const ADS_TO_WATCH = 10;
 const COOLDOWN_MINUTES = 15;
 
-// Track processed snapshots with timestamps
+// Track processed snapshots
 const processedSnapshots = new Map();
 
-// Function to generate engaging, growth-motivated notification message using ChatGPT
+// Validate oneSignalId format (UUID-like)
+function isValidOneSignalId(id) {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return typeof id === 'string' && uuidRegex.test(id);
+}
+
+// Generate notification message
 async function generateNotificationMessage(type = 'ad', userId = null) {
   try {
     let prompt;
@@ -87,11 +93,15 @@ async function generateNotificationMessage(type = 'ad', userId = null) {
   }
 }
 
-// Function to send push notification via OneSignal to a specific user or segment
+// Send push notification via OneSignal
 async function sendNotification(message, target = 'All', oneSignalId = null) {
   try {
     if (!ONESIGNAL_API_KEY) {
       console.error('ONESIGNAL_API_KEY is not set');
+      return false;
+    }
+    if (oneSignalId && !isValidOneSignalId(oneSignalId)) {
+      console.warn(`Invalid oneSignalId format: ${oneSignalId}`);
       return false;
     }
     const notificationData = {
@@ -101,9 +111,9 @@ async function sendNotification(message, target = 'All', oneSignalId = null) {
     };
 
     if (oneSignalId) {
-      notificationData.include_player_ids = [oneSignalId]; // Target specific user
+      notificationData.include_player_ids = [oneSignalId];
     } else {
-      notificationData.included_segments = [target]; // Target segment
+      notificationData.included_segments = [target];
     }
 
     const response = await axios.post(
@@ -124,7 +134,7 @@ async function sendNotification(message, target = 'All', oneSignalId = null) {
   }
 }
 
-// Function to check and update ad watch status
+// Check and update ad watch status
 async function checkAdStatus(userId) {
   if (!userId) {
     console.error('Invalid userId in checkAdStatus');
@@ -140,16 +150,16 @@ async function checkAdStatus(userId) {
   return doc.data();
 }
 
-// Function to award coins and handle rewards
+// Award coins and handle rewards
 async function awardCoins(userId) {
   const userData = await checkAdStatus(userId);
   if (!userData) return { coins: 0, message: 'Invalid user data' };
   if (userData.adsWatched >= ADS_TO_WATCH) {
-    const coins = Math.floor(Math.random() * (25 - 10 + 1)) + 10; // Random 10-25 coins
+    const coins = Math.floor(Math.random() * (25 - 10 + 1)) + 10;
     const newCoins = userData.coins + coins;
     const rewards = userData.rewards || [];
     rewards.push({ type: 'coins', amount: coins, timestamp: new Date().toISOString() });
-    if (rewards.length > 5) rewards.shift(); // Keep only last 5 rewards
+    if (rewards.length > 5) rewards.shift();
 
     await db.collection('users').doc(userId).update({
       adsWatched: 0,
@@ -163,8 +173,8 @@ async function awardCoins(userId) {
   return { coins: 0, message: 'Watch 10 ads to grow your channels!' };
 }
 
-// Schedule notifications for Indian daytime (IST: UTC+5:30) and midnight
-const istOffset = 5.5 * 60 * 60 * 1000; // IST offset in milliseconds
+// Schedule notifications for IST
+const istOffset = 5.5 * 60 * 60 * 1000;
 const getIstTime = () => new Date(Date.now() + istOffset).toLocaleString('en-US', { timeZone: 'Asia/Kolkata' });
 
 cron.schedule('0 0 0,3,6,9,12,15,18,21 * * *', async () => {
@@ -177,16 +187,15 @@ cron.schedule('0 0 0,3,6,9,12,15,18,21 * * *', async () => {
   const appSuccess = await sendNotification(appMessage, 'Active Users');
   console.log(`App notification ${appSuccess ? 'sent' : 'failed'}: ${appMessage}`);
 
-  // Additional midnight notifications (10 PM, 11 PM, 12 AM IST)
   const utcHour = new Date().getUTCHours();
-  if ([16, 17, 18].includes(utcHour)) { // Adjusted for UTC+5:30
+  if ([16, 17, 18].includes(utcHour)) {
     const extraAdMessage = await generateNotificationMessage('ad');
     const extraSuccess = await sendNotification(extraAdMessage);
     console.log(`Extra ad notification ${extraSuccess ? 'sent' : 'failed'}: ${extraAdMessage}`);
   }
 });
 
-// API endpoint to track ad watching and award coins
+// API endpoint to track ad watching
 app.post('/watch-ad', async (req, res) => {
   const { userId } = req.body;
   if (!userId) return res.status(400).send('User ID required');
@@ -210,7 +219,7 @@ app.post('/watch-ad', async (req, res) => {
   }
 });
 
-// API endpoint to spend coins on premium features (e.g., followers, subscribers)
+// API endpoint to spend coins
 app.post('/buy-feature', async (req, res) => {
   const { userId, feature, quantity } = req.body;
   if (!userId || !feature || !quantity) return res.status(400).send('User ID, feature, and quantity required');
@@ -221,10 +230,10 @@ app.post('/buy-feature', async (req, res) => {
   switch (feature) {
     case 'followers':
       cost = quantity * 10;
-      break; // 10 coins per Instagram follower
+      break;
     case 'subscribers':
       cost = quantity * 20;
-      break; // 20 coins per YouTube subscriber
+      break;
     default:
       return res.status(400).send('Invalid feature');
   }
@@ -243,7 +252,14 @@ app.post('/buy-feature', async (req, res) => {
 // API endpoint to update oneSignalId
 app.post('/update-onesignal', async (req, res) => {
   const { userId, oneSignalId } = req.body;
-  if (!userId || !oneSignalId) return res.status(400).send('User ID and OneSignal ID required');
+  if (!userId || !oneSignalId) {
+    console.error(`Missing parameters: userId=${userId}, oneSignalId=${oneSignalId}`);
+    return res.status(400).send('User ID and OneSignal ID required');
+  }
+  if (!isValidOneSignalId(oneSignalId)) {
+    console.warn(`Invalid oneSignalId format for user ${userId}: ${oneSignalId}`);
+    return res.status(400).send('Invalid OneSignal ID format');
+  }
 
   try {
     await db.collection('users').doc(userId).set({ oneSignalId }, { merge: true });
@@ -259,41 +275,43 @@ app.post('/update-onesignal', async (req, res) => {
 db.collection('Premium').onSnapshot((snapshot) => {
   snapshot.docChanges().forEach(async (change) => {
     try {
-      const snapshotKey = `${change.doc.id}:${change.type}:${change.doc.data().subscriptionType || 'unknown'}`;
-      const lastProcessed = processedSnapshots.get(snapshotKey);
-      const now = Date.now();
-      if (lastProcessed && now - lastProcessed < 120000) { // 2-minute deduplication window
-        console.log(`Skipping duplicate snapshot for Premium doc ${change.doc.id}, type: ${change.type}, subscriptionType: ${change.doc.data().subscriptionType}`);
-        return;
-      }
-      processedSnapshots.set(snapshotKey, now);
-      setTimeout(() => processedSnapshots.delete(snapshotKey), 120000); // Clear after 2 minutes
-
       const data = change.doc.data();
-      let userId = data.userId || change.doc.id; // Fallback to doc ID
+      const userId = data.userId || change.doc.id;
       if (!userId) {
         console.error('Invalid or missing userId in Premium collection snapshot:', change.doc.id, data);
         return;
       }
+
+      // Enhanced deduplication
+      const snapshotKey = `${userId}:${change.type}:${data.subscriptionType || 'unknown'}:${change.doc.id}`;
+      const lastProcessed = processedSnapshots.get(snapshotKey);
+      const now = Date.now();
+      if (lastProcessed && now - lastProcessed < 300000) { // 5-minute window
+        console.log(`Skipping duplicate snapshot for Premium doc ${change.doc.id}, user ${userId}, type: ${change.type}, subscriptionType: ${data.subscriptionType}`);
+        return;
+      }
+      processedSnapshots.set(snapshotKey, now);
+      setTimeout(() => processedSnapshots.delete(snapshotKey), 300000);
+
       if (change.type === 'added' || (change.type === 'modified' && data.isPremiumUser)) {
         const subscriptionType = data.subscriptionType || 'unknown';
         console.log(`Processing subscription for user ${userId}, type: ${subscriptionType}`);
 
-        // Fix missing userId field in Firestore
+        // Fix missing userId
         if (!data.userId) {
           await db.collection('Premium').doc(change.doc.id).update({ userId });
           console.log(`Fixed missing userId for Premium doc ${change.doc.id}`);
         }
 
-        // Fetch user's oneSignalId from users collection
+        // Fetch oneSignalId
         const userDoc = await db.collection('users').doc(userId).get();
-        if (userDoc.exists && userDoc.data().oneSignalId) {
+        if (userDoc.exists && userDoc.data().oneSignalId && isValidOneSignalId(userDoc.data().oneSignalId)) {
           const oneSignalId = userDoc.data().oneSignalId;
           const message = await generateNotificationMessage('subscription');
           const success = await sendNotification(message, null, oneSignalId);
           console.log(`Subscription notification ${success ? 'sent' : 'failed'} to user ${userId} for ${subscriptionType}, oneSignalId: ${oneSignalId}`);
         } else {
-          console.warn(`No oneSignalId found for user ${userId} or user document missing`, { userId, docExists: userDoc.exists });
+          console.warn(`No valid oneSignalId found for user ${userId}`, { userId, docExists: userDoc.exists, oneSignalId: userDoc.data()?.oneSignalId });
         }
       }
     } catch (error) {
@@ -302,7 +320,7 @@ db.collection('Premium').onSnapshot((snapshot) => {
   });
 });
 
-// Firestore listener for coin purchases and cooldown completion
+// Firestore listener for coin purchases and cooldown
 db.collection('users').onSnapshot((snapshot) => {
   snapshot.docChanges().forEach(async (change) => {
     try {
@@ -314,30 +332,25 @@ db.collection('users').onSnapshot((snapshot) => {
       const userData = change.doc.data();
       const oneSignalId = userData.oneSignalId;
 
-      // Handle coin purchases
+      // Coin purchases
       if (change.type === 'modified') {
         const oldData = change.oldIndex !== -1 ? snapshot.docs[change.oldIndex].data() : {};
-        if (userData.coins > (oldData.coins || 0) && !userData.lastAdTime) {
-          if (oneSignalId) {
-            const message = await generateNotificationMessage('coin_purchase');
-            const success = await sendNotification(message, null, oneSignalId);
-            console.log(`Coin purchase notification ${success ? 'sent' : 'failed'} to user ${userId}, oneSignalId: ${oneSignalId}`);
-          } else {
-            console.warn(`No oneSignalId found for user ${userId} for coin purchase`);
-          }
+        if (userData.coins > (oldData.coins || 0) && !userData.lastAdTime && oneSignalId && isValidOneSignalId(oneSignalId)) {
+          const message = await generateNotificationMessage('coin_purchase');
+          const success = await sendNotification(message, null, oneSignalId);
+          console.log(`Coin purchase notification ${success ? 'sent' : 'failed'} to user ${userId}, oneSignalId: ${oneSignalId}`);
         }
       }
 
-      // Handle cooldown completion
-      if ((change.type === 'added' || change.type === 'modified') && userData.adCooldownEndTime && oneSignalId) {
+      // Cooldown completion
+      if ((change.type === 'added' || change.type === 'modified') && userData.adCooldownEndTime && oneSignalId && isValidOneSignalId(oneSignalId)) {
         const now = Date.now();
         const cooldownEndTime = userData.adCooldownEndTime;
         const timeUntilCooldownEnds = cooldownEndTime - now;
 
-        if (timeUntilCooldownEnds > 0 && timeUntilCooldownEnds < 24 * 60 * 60 * 1000) { // Only schedule if within 24 hours
+        if (timeUntilCooldownEnds > 0 && timeUntilCooldownEnds < 24 * 60 * 60 * 1000) {
           console.log(`Scheduling cooldown notification for user ${userId} in ${timeUntilCooldownEnds / 1000} seconds`);
           setTimeout(async () => {
-            // Verify cooldown is still complete
             const userDoc = await db.collection('users').doc(userId).get();
             if (userDoc.exists && userDoc.data().adCooldownEndTime <= Date.now()) {
               const message = await generateNotificationMessage('cooldown');
@@ -355,6 +368,6 @@ db.collection('users').onSnapshot((snapshot) => {
   });
 });
 
-// Start the server
+// Start server
 app.get('/', (req, res) => res.send('Vidalyzer Backend Running'));
 app.listen(port, () => console.log(`Server running on port ${port}`));
