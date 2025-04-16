@@ -27,8 +27,8 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const ADS_TO_WATCH = 10;
 const COOLDOWN_MINUTES = 15;
 
-// Track processed snapshots to avoid duplicates
-const processedSnapshots = new Set();
+// Track processed snapshots with timestamps
+const processedSnapshots = new Map();
 
 // Function to generate engaging, growth-motivated notification message using ChatGPT
 async function generateNotificationMessage(type = 'ad', userId = null) {
@@ -259,13 +259,15 @@ app.post('/update-onesignal', async (req, res) => {
 db.collection('Premium').onSnapshot((snapshot) => {
   snapshot.docChanges().forEach(async (change) => {
     try {
-      const snapshotId = `${change.doc.id}:${change.type}:${Date.now()}`;
-      if (processedSnapshots.has(snapshotId)) {
-        console.log(`Skipping duplicate snapshot for Premium doc ${change.doc.id}, type: ${change.type}`);
+      const snapshotKey = `${change.doc.id}:${change.type}:${change.doc.data().subscriptionType || 'unknown'}`;
+      const lastProcessed = processedSnapshots.get(snapshotKey);
+      const now = Date.now();
+      if (lastProcessed && now - lastProcessed < 120000) { // 2-minute deduplication window
+        console.log(`Skipping duplicate snapshot for Premium doc ${change.doc.id}, type: ${change.type}, subscriptionType: ${change.doc.data().subscriptionType}`);
         return;
       }
-      processedSnapshots.add(snapshotId);
-      setTimeout(() => processedSnapshots.delete(snapshotId), 60000); // Clear after 1 minute
+      processedSnapshots.set(snapshotKey, now);
+      setTimeout(() => processedSnapshots.delete(snapshotKey), 120000); // Clear after 2 minutes
 
       const data = change.doc.data();
       let userId = data.userId || change.doc.id; // Fallback to doc ID
@@ -289,7 +291,7 @@ db.collection('Premium').onSnapshot((snapshot) => {
           const oneSignalId = userDoc.data().oneSignalId;
           const message = await generateNotificationMessage('subscription');
           const success = await sendNotification(message, null, oneSignalId);
-          console.log(`Subscription notification ${success ? 'sent' : 'failed'} to user ${userId} for ${subscriptionType}`);
+          console.log(`Subscription notification ${success ? 'sent' : 'failed'} to user ${userId} for ${subscriptionType}, oneSignalId: ${oneSignalId}`);
         } else {
           console.warn(`No oneSignalId found for user ${userId} or user document missing`, { userId, docExists: userDoc.exists });
         }
@@ -319,7 +321,7 @@ db.collection('users').onSnapshot((snapshot) => {
           if (oneSignalId) {
             const message = await generateNotificationMessage('coin_purchase');
             const success = await sendNotification(message, null, oneSignalId);
-            console.log(`Coin purchase notification ${success ? 'sent' : 'failed'} to user ${userId}`);
+            console.log(`Coin purchase notification ${success ? 'sent' : 'failed'} to user ${userId}, oneSignalId: ${oneSignalId}`);
           } else {
             console.warn(`No oneSignalId found for user ${userId} for coin purchase`);
           }
@@ -340,7 +342,7 @@ db.collection('users').onSnapshot((snapshot) => {
             if (userDoc.exists && userDoc.data().adCooldownEndTime <= Date.now()) {
               const message = await generateNotificationMessage('cooldown');
               const success = await sendNotification(message, null, oneSignalId);
-              console.log(`Cooldown completion notification ${success ? 'sent' : 'failed'} to user ${userId}`);
+              console.log(`Cooldown completion notification ${success ? 'sent' : 'failed'} to user ${userId}, oneSignalId: ${oneSignalId}`);
             } else {
               console.log(`Cooldown not yet complete for user ${userId} or user data missing`);
             }
