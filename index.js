@@ -448,22 +448,37 @@ async function checkAdStatus(userId) {
 async function awardCoins(userId) {
   console.log(`Awarding coins for user: ${userId}`);
   const userData = await checkAdStatus(userId);
-  if (!userData) return { coins: 0, message: 'Invalid user data' };
-  if (userData.adsWatched >= ADS_TO_WATCH) {
+  if (!userData) {
+    console.error(`awardCoins: Invalid user data for user ${userId}`);
+    return { coins: 0, message: 'Invalid user data', error: 'User data not found' };
+  }
+  if (userData.adsWatched < ADS_TO_WATCH) {
+    console.log(`awardCoins: Not enough ads watched for user ${userId}, adsWatched: ${userData.adsWatched}`);
+    return { coins: 0, message: 'Watch 10 ads to earn coins!' };
+  }
+
+  try {
     const coins = Math.floor(Math.random() * (25 - 10 + 1)) + 10;
     const newCoins = userData.coins + coins;
     const rewards = userData.recentRewards || [];
-    rewards.unshift({ name: `${coins} Coins`, timestamp: new Date().toISOString() });
+    const newReward = {
+      name: `${coins} Coins`,
+      timestamp: new Date().toISOString()
+    };
+    rewards.unshift(newReward);
     if (rewards.length > 5) rewards.pop();
 
-    await db.collection('users').doc(userId).update({
+    const updateData = {
       adsWatched: 0,
       lastAdTime: new Date().toISOString(),
       adCooldownEndTime: Date.now() + COOLDOWN_MINUTES * 60 * 1000,
       coins: newCoins,
-      recentRewards: rewards,
-    });
-    console.log(`Awarded ${coins} coins to user ${userId}`);
+      recentRewards: rewards
+    };
+
+    console.log(`Attempting to update user ${userId} with data:`, updateData);
+    await db.collection('users').doc(userId).update(updateData);
+    console.log(`Successfully awarded ${coins} coins to user ${userId}`);
 
     // Send coin_purchase notification
     if (userData.oneSignalId && isValidOneSignalId(userData.oneSignalId) && (await canSendNotification(userId, 'coin_purchase'))) {
@@ -474,8 +489,21 @@ async function awardCoins(userId) {
     }
 
     return { coins, message: `Earned ${coins} coins! Elevate your growth! 🎉` };
+  } catch (error) {
+    console.error(`Error awarding coins for user ${userId}:`, {
+      message: error.message,
+      code: error.code,
+      stack: error.stack,
+      userId,
+      adsWatched: userData.adsWatched,
+      coins: userData.coins
+    });
+    return {
+      coins: 0,
+      message: 'Failed to save reward. Please try again.',
+      error: error.message || 'Unknown error saving reward'
+    };
   }
-  return { coins: 0, message: 'Watch 10 ads to earn coins!' };
 }
 
 // Schedule notifications for motivational and subscription
@@ -540,9 +568,13 @@ app.post('/watch-ad', async (req, res) => {
     console.log(`watch-ad: Cooldown active for user ${userId}`);
     res.status(429).send({ message: `Cooldown active. Wait ${COOLDOWN_MINUTES} minutes.` });
   } else {
-    const { coins, message } = await awardCoins(userId);
-    console.log(`watch-ad: Award result for ${userId}: ${message}, coins: ${coins}`);
-    res.send({ message, coins });
+    const { coins, message, error } = await awardCoins(userId);
+    console.log(`watch-ad: Award result for ${userId}: ${message}, coins: ${coins}, error: ${error || 'none'}`);
+    if (error) {
+      res.status(500).send({ message, error });
+    } else {
+      res.send({ message, coins });
+    }
   }
 });
 
@@ -808,7 +840,7 @@ try {
 setInterval(() => {
   console.log(`Pinging self at ${getIstTime()} to keep instance alive`);
   axios
-    .get(`${RAILWAY_URL}/ping`)
+    .get(`${RENDER_URL}/ping`)
     .catch((err) => console.error('Ping failed:', err.message, err.stack));
 }, 5 * 60 * 1000);
 
@@ -826,7 +858,7 @@ process.env.TZ = 'Asia/Kolkata';
 const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID;
 const ONESIGNAL_API_KEY = process.env.ONESIGNAL_API_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const RAILWAY_URL = process.env.RAILWAY_URL || 'https://vidalyzer-backend-production.up.railway.app';
+const RENDER_URL = process.env.RENDER_URL || 'https://vidalyzer-backend.onrender.com';
 
 // Environment variable validation
 if (!ONESIGNAL_APP_ID || !ONESIGNAL_API_KEY || !OPENAI_API_KEY || !process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_CLIENT_EMAIL || !process.env.FIREBASE_PRIVATE_KEY) {
