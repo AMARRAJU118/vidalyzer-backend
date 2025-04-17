@@ -28,7 +28,7 @@ const db = getFirestore();
 const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID || 'd2288872-b12c-4974-af8c-e98665ea2564';
 const ONESIGNAL_API_KEY = process.env.ONESIGNAL_API_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const RAILWAY_URL = process.env.RAILWAY_URL || 'https://your-railway-app.up.railway.app';
+const RAILWAY_URL = process.env.RAILWAY_URL || 'https://vidalyzer-backend-production.up.railway.app';
 
 if (!ONESIGNAL_API_KEY) {
   console.error('ONESIGNAL_API_KEY is required but not set. Exiting.');
