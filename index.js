@@ -24,79 +24,66 @@ try {
 }
 const db = getFirestore();
 
-// Set timezone for consistency
-process.env.TZ = 'Asia/Kolkata';
+// OpenAI usage tracking
+const OPENAI_DAILY_LIMIT = 6;
+let openAiCallCount = 0;
+const openAiUsageRef = db.collection('system').doc('openai_usage');
 
-// Environment variables with validation
-const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID;
-const ONESIGNAL_API_KEY = process.env.ONESIGNAL_API_KEY;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const RAILWAY_URL = process.env.RAILWAY_URL || 'https://vidalyzer-backend-production.up.railway.app';
-
-if (!ONESIGNAL_APP_ID) {
-  console.error('ONESIGNAL_APP_ID is required but not set. Exiting.');
-  process.exit(1);
-}
-if (!ONESIGNAL_API_KEY) {
-  console.error('ONESIGNAL_API_KEY is required but not set. Exiting.');
-  process.exit(1);
-}
-if (!OPENAI_API_KEY) {
-  console.error('OPENAI_API_KEY is required but not set. Exiting.');
-  process.exit(1);
-}
-if (!process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_CLIENT_EMAIL || !process.env.FIREBASE_PRIVATE_KEY) {
-  console.error('Firebase credentials incomplete. Exiting.');
-  process.exit(1);
+async function initializeOpenAiUsage() {
+  const now = new Date();
+  const istNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  const startOfDay = new Date(istNow.setHours(0, 0, 0, 0)).getTime();
+  const usageDoc = await openAiUsageRef.get();
+  if (!usageDoc.exists || usageDoc.data().lastReset < startOfDay) {
+    await openAiUsageRef.set({ count: 0, lastReset: startOfDay });
+    openAiCallCount = 0;
+    console.log('OpenAI usage reset for new day at', getIstTime());
+  } else {
+    openAiCallCount = usageDoc.data().count;
+    console.log(`OpenAI usage initialized: ${openAiCallCount}/${OPENAI_DAILY_LIMIT} calls at`, getIstTime());
+  }
 }
 
-// Ad and coin tracking constants
-const ADS_TO_WATCH = 10;
-const COOLDOWN_MINUTES = 15;
-
-// Track processed snapshots to avoid duplicates
-const processedSnapshots = new Map();
-
-// Validate oneSignalId format (UUID-like)
-function isValidOneSignalId(id) {
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  return typeof id === 'string' && uuidRegex.test(id);
-}
-
-// Log server startup and timezone
-console.log('Server starting at', new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-console.log('Timezone:', process.env.TZ);
-
-// Generate notification message with varied tones
 async function generateNotificationMessage(type = 'ad', userId = null) {
   console.log(`Generating notification for type: ${type}, userId: ${userId || 'none'}`);
   try {
+    const usageDoc = await openAiUsageRef.get();
+    if (usageDoc.data().count >= OPENAI_DAILY_LIMIT) {
+      console.warn('OpenAI daily limit reached, using fallback message');
+      const fallbacks = {
+        ad: 'Watch ads to boost your channels! 📈',
+        cooldown: 'Ad cooldown over! Grow now! ⏰',
+        motivational: 'Maximize growth with Vidalyzer! 🚀',
+        subscription: 'Premium activated! Excel now! 🎉',
+        coin_purchase: 'Coins added! Elevate your growth! 💰',
+      };
+      return fallbacks[type] || 'Boost your channels now! 🚀';
+    }
+
     let prompt;
-    const tones = ['friend', 'girlfriend', 'boyfriend'];
+    const tones = ['inspirational', 'empowering', 'professional'];
     const randomTone = tones[Math.floor(Math.random() * tones.length)];
 
     switch (type) {
       case 'ad':
-        prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user to watch ads for coins to grow YouTube/Instagram. Examples: Friend: "Yo, watch ads & boost your Insta!", Girlfriend: "Babe, ads = coins for your reels! 😘", Boyfriend: "Hey, watch ads to grow big! 💪"`;
+        prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user to watch ads. Inspirational: "Ads fuel your growth journey! 🌟", Empowering: "Watch ads, own your success! 💪", Professional: "Boost channels with ad coins! 📊"`;
         break;
       case 'cooldown':
-        prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user noting ad cooldown is over. Examples: Friend: "Cooldown done! Watch ads now! 😎", Girlfriend: "Sweetie, ads are back! Go for it! 💖", Boyfriend: "Cooldown over, champ! Ads time! 🏆"`;
+        prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user noting ad cooldown is over. Inspirational: "Rise again! Ads await you! 🌟", Empowering: "Cooldown done, seize growth! 💪", Professional: "Ad cooldown ended. Act now! 📈"`;
         break;
       case 'motivational':
-        prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user to motivate daily app use or content creation for YouTube/Instagram SEO. Examples: Friend: "Uploaded a vid today? Use Vidalyzer! 🚀", Girlfriend: "Hey love, post a reel & boost SEO! 😍", Boyfriend: "Man, use Vidalyzer for epic YouTube growth! 🔥"`;
+        prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user to use the app daily. Inspirational: "Shine daily with Vidalyzer! 🌟", Empowering: "Grow stronger every day! 💪", Professional: "Optimize growth daily! 📊"`;
         break;
       case 'subscription':
-        prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user celebrating a new subscription. Examples: Friend: "Yo, you're premium now! Rock it! 🎉", Girlfriend: "OMG babe, premium vibes! So proud! 😘", Boyfriend: "Premium status, bro! You're a star! 🌟"`;
+        prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user celebrating a subscription. Inspirational: "Premium unlocks your potential! 🌟", Empowering: "Premium power is yours! 💪", Professional: "Premium activated! Grow fast! 📈"`;
         break;
       case 'coin_purchase':
-        prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user celebrating coin purchases. Examples: Friend: "Nice! Coins for your growth! 🙌", Girlfriend: "Sweetie, those coins are 🔥! Love it!", Boyfriend: "Coins grabbed, dude! Let's grow! 💪"`;
-        break;
-      case 'test':
-        prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user for testing purposes. Examples: Friend: "Test ping! Keep growing! 😎", Girlfriend: "Hey cutie, test vibe! 🥰", Boyfriend: "Test alert, king! 🚀"`;
+        prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user celebrating coin purchases. Inspirational: "Coins pave your success! 🌟", Empowering: "Coins fuel your rise! 💪", Professional: "Coins secured! Boost now! 📊"`;
         break;
       default:
-        prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user to motivate app use. Examples: Friend: "Let's grow your channel today! 😎", Girlfriend: "Hey cutie, boost your reels now! 🥰", Boyfriend: "Get on Vidalyzer, king! Skyrocket! 🚀"`;
+        prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user. Inspirational: "Elevate your brand today! 🌟", Empowering: "Take charge of your growth! 💪", Professional: "Enhance your reach now! 📈"`;
     }
+
     const response = await axios.post(
       'https://api.openai.com/v1/chat/completions',
       {
@@ -113,18 +100,19 @@ async function generateNotificationMessage(type = 'ad', userId = null) {
     );
     const message = response.data.choices[0].message.content.trim();
     console.log(`Generated message for ${type}: ${message}`);
+    await openAiUsageRef.update({ count: usageDoc.data().count + 1 });
+    openAiCallCount++;
     return message.length <= 50 ? message : message.substring(0, 50).trim() + '…';
   } catch (error) {
     console.error(`Error generating notification for type ${type}:`, error.response ? error.response.data : error.message);
     const fallbacks = {
-      ad: ['Watch ads to boost your channel! 🚀', 'Hey, ads = coins for growth! 😎', 'Grow big with ad coins! 💪'],
-      cooldown: ['Ads are back! Watch now! 🎉', 'Cooldown done, go for ads! 😍', 'Time to watch ads again! 🏆'],
-      motivational: ['Post a reel & grow! 🌟', 'Use Vidalyzer daily! 🚀', 'Boost your SEO now! 🔥'],
-      subscription: ['You’re premium! Shine on! 🎉', 'Premium unlocked! So cool! 😘', 'Welcome to premium! 🌟'],
-      coin_purchase: ['Coins added! Grow fast! 🙌', 'Nice coin grab! Let’s go! 💪', 'Coins for your fame! 🔥'],
-      test: ['Test ping! Keep growing! 😎', 'Test vibe, stay awesome! 🥰', 'Test alert, let’s grow! 🚀'],
+      ad: 'Watch ads to boost your channels! 📈',
+      cooldown: 'Ad cooldown over! Grow now! ⏰',
+      motivational: 'Maximize growth with Vidalyzer! 🚀',
+      subscription: 'Premium activated! Excel now! 🎉',
+      coin_purchase: 'Coins added! Elevate your growth! 💰',
     };
-    const fallback = fallbacks[type] ? fallbacks[type][Math.floor(Math.random() * fallbacks[type].length)] : 'Boost your channel now! 🚀';
+    const fallback = fallbacks[type] || 'Boost your channels now! 🚀';
     console.log(`Using fallback message for ${type}: ${fallback}`);
     return fallback;
   }
@@ -146,7 +134,7 @@ async function sendNotification(message, target = 'All', oneSignalId = null, ret
       const notificationData = {
         app_id: ONESIGNAL_APP_ID,
         contents: { en: message },
-        headings: { en: 'Vidalyzer Boost! 🎉' },
+        headings: { en: 'Vidalyzer Success! 🎯' }, // Updated heading for professionalism
       };
       if (oneSignalId) {
         notificationData.include_player_ids = [oneSignalId];
@@ -205,11 +193,11 @@ async function checkAdStatus(userId) {
   const doc = await userRef.get();
   if (!doc.exists) {
     await userRef.set(
-      { adsWatched: 0, lastAdTime: null, coins: 0, recentRewards: [], oneSignalId: '', adCooldownEndTime: null },
+      { adsWatched: 0, lastAdTime: null, coins: 0, recentRewards: [], oneSignalId: '', adCooldownEndTime: null, firstLogin: true },
       { merge: true }
     );
     console.log(`Initialized user document for ${userId}`);
-    return { adsWatched: 0, lastAdTime: null, coins: 0, recentRewards: [], oneSignalId: '', adCooldownEndTime: null };
+    return { adsWatched: 0, lastAdTime: null, coins: 0, recentRewards: [], oneSignalId: '', adCooldownEndTime: null, firstLogin: true };
   }
   const data = doc.data();
   console.log(`User data retrieved:`, { userId, adsWatched: data.adsWatched, oneSignalId: data.oneSignalId });
@@ -236,23 +224,15 @@ async function awardCoins(userId) {
       recentRewards: rewards,
     });
     console.log(`Awarded ${coins} coins to user ${userId}`);
-    return { coins, message: `Wow! Earned ${coins} coins to grow! 🎉` };
+    return { coins, message: `Earned ${coins} coins! Elevate your growth! 🎉` };
   }
-  return { coins: 0, message: 'Watch 10 ads to grow your channels!' };
+  return { coins: 0, message: 'Watch 10 ads to earn coins!' };
 }
 
 // Schedule notifications for IST
 const getIstTime = () => new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' });
 
-// Test cron to verify OneSignal (every 5 minutes)
-cron.schedule('*/5 * * * *', async () => {
-  console.log('Test cron triggered at', getIstTime());
-  const testMessage = await generateNotificationMessage('test');
-  const success = await sendNotification(testMessage, 'Active Users');
-  console.log(`Test notification ${success ? 'sent' : 'failed'} at ${getIstTime()}: ${testMessage}`);
-}, { scheduled: true, timezone: 'Asia/Kolkata' });
-
-// Schedule ad notifications: 10 AM, 2 PM, 6 PM IST
+// Ad and motivational cron jobs
 cron.schedule('0 10 * * *', async () => {
   console.log('Ad cron (10 AM) triggered at', getIstTime());
   const adMessage = await generateNotificationMessage('ad');
@@ -274,7 +254,6 @@ cron.schedule('0 18 * * *', async () => {
   console.log(`Ad notification ${success ? 'sent' : 'failed'} at ${getIstTime()}: ${adMessage}`);
 }, { scheduled: true, timezone: 'Asia/Kolkata' });
 
-// Schedule motivational notifications: 9 AM, 4 PM IST
 cron.schedule('0 9 * * *', async () => {
   console.log('Motivational cron (9 AM) triggered at', getIstTime());
   const motivationalMessage = await generateNotificationMessage('motivational');
@@ -289,7 +268,7 @@ cron.schedule('0 16 * * *', async () => {
   console.log(`Motivational notification ${success ? 'sent' : 'failed'} at ${getIstTime()}: ${motivationalMessage}`);
 }, { scheduled: true, timezone: 'Asia/Kolkata' });
 
-// API endpoint to track ad watching
+// API endpoints
 app.post('/watch-ad', async (req, res) => {
   const { userId } = req.body;
   if (!userId) {
@@ -322,7 +301,6 @@ app.post('/watch-ad', async (req, res) => {
   }
 });
 
-// API endpoint to spend coins
 app.post('/buy-feature', async (req, res) => {
   const { userId, feature, quantity } = req.body;
   if (!userId || !feature || !quantity) {
@@ -361,7 +339,6 @@ app.post('/buy-feature', async (req, res) => {
   }
 });
 
-// API endpoint to update oneSignalId
 app.post('/update-onesignal', async (req, res) => {
   const { userId, oneSignalId } = req.body;
   if (!userId || !oneSignalId) {
@@ -374,12 +351,19 @@ app.post('/update-onesignal', async (req, res) => {
   }
 
   try {
-    await db.collection('users').doc(userId).set({ oneSignalId }, { merge: true });
+    const userRef = db.collection('users').doc(userId);
+    const userDoc = await userRef.get();
+    await userRef.set({ oneSignalId }, { merge: true });
     console.log(`update-onesignal: Updated oneSignalId for user ${userId}: ${oneSignalId}`);
-    // Send test notification to verify
-    const testMessage = await generateNotificationMessage('test', userId);
-    const success = await sendNotification(testMessage, null, oneSignalId);
-    console.log(`Test notification after update ${success ? 'sent' : 'failed'} to ${userId}`);
+
+    // Send welcome notification on first login
+    if (userDoc.exists && userDoc.data().firstLogin === true) {
+      const welcomeMessage = 'Thank you for downloading Vidalyzer! Grow your Instagram and YouTube faster now!';
+      const success = await sendNotification(welcomeMessage, null, oneSignalId);
+      console.log(`Welcome notification ${success ? 'sent' : 'failed'} to ${userId} on first login`);
+      await userRef.update({ firstLogin: false }); // Mark as not first login
+    }
+
     res.send({ message: 'OneSignal ID updated successfully' });
   } catch (error) {
     console.error(`update-onesignal: Error updating oneSignalId for user ${userId}:`, error.message);
@@ -387,7 +371,6 @@ app.post('/update-onesignal', async (req, res) => {
   }
 });
 
-// API endpoint to test notifications
 app.post('/test-notification', async (req, res) => {
   const { userId, type = 'ad' } = req.body;
   if (!userId) {
@@ -417,7 +400,6 @@ app.post('/test-notification', async (req, res) => {
   }
 });
 
-// Firestore listener for new subscriptions
 db.collection('Premium').onSnapshot(
   (snapshot) => {
     console.log('Premium snapshot triggered at', getIstTime(), 'changes:', snapshot.docChanges().length);
@@ -476,7 +458,6 @@ db.collection('Premium').onSnapshot(
   }
 );
 
-// Firestore listener for coin purchases and cooldown
 db.collection('users').onSnapshot(
   (snapshot) => {
     console.log('Users snapshot triggered at', getIstTime(), 'changes:', snapshot.docChanges().length);
@@ -509,26 +490,26 @@ db.collection('users').onSnapshot(
           const cooldownEndTime = userData.adCooldownEndTime;
           const timeUntilCooldownEnds = cooldownEndTime - now;
 
+          console.log(`Current time: ${now}, cooldownEndTime: ${cooldownEndTime}, timeUntilCooldownEnds: ${timeUntilCooldownEnds}ms`);
           if (timeUntilCooldownEnds > 0 && timeUntilCooldownEnds < 24 * 60 * 60 * 1000) {
             console.log(`Scheduling cooldown notification for ${userId} in ${timeUntilCooldownEnds / 1000} seconds`);
             setTimeout(async () => {
-              try {
-                const userDoc = await db.collection('users').doc(userId).get();
-                if (userDoc.exists && userDoc.data().adCooldownEndTime <= Date.now()) {
-                  const message = await generateNotificationMessage('cooldown');
-                  const success = await sendNotification(message, null, oneSignalId);
-                  console.log(`Cooldown notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}`);
-                  // Clear adCooldownEndTime after notification
-                  await db.collection('users').doc(userId).update({
-                    adCooldownEndTime: null,
-                  });
-                } else {
-                  console.log(`Cooldown notification skipped for ${userId}: userDoc exists=${userDoc.exists}, cooldownEndTime=${userDoc.data()?.adCooldownEndTime}`);
-                }
-              } catch (error) {
-                console.error(`Error sending cooldown notification for ${userId}:`, error.message);
+              const userDoc = await db.collection('users').doc(userId).get();
+              if (userDoc.exists && userDoc.data().adCooldownEndTime <= Date.now()) {
+                const message = await generateNotificationMessage('cooldown');
+                const success = await sendNotification(message, null, oneSignalId);
+                console.log(`Cooldown notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}`);
+                await db.collection('users').doc(userId).update({ adCooldownEndTime: null });
+              } else {
+                console.log(`Cooldown notification skipped for ${userId}: exists=${userDoc.exists}, currentTime=${Date.now()}, cooldownEndTime=${userDoc.data()?.adCooldownEndTime}`);
               }
             }, timeUntilCooldownEnds);
+          } else if (timeUntilCooldownEnds <= 0) {
+            console.log(`Cooldown already expired for ${userId}, sending immediate notification`);
+            const message = await generateNotificationMessage('cooldown');
+            const success = await sendNotification(message, null, oneSignalId);
+            console.log(`Immediate cooldown notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}, message: ${message}`);
+            await db.collection('users').doc(userId).update({ adCooldownEndTime: null });
           } else {
             console.log(`No cooldown notification scheduled for ${userId}: timeUntilCooldownEnds=${timeUntilCooldownEnds}`);
           }
@@ -543,7 +524,6 @@ db.collection('users').onSnapshot(
   }
 );
 
-// Start server with health check
 app.get('/', (req, res) => res.send('Vidalyzer Backend Running'));
 app.get('/ping', (req, res) => res.send('OK'));
 try {
@@ -555,10 +535,47 @@ try {
   process.exit(1);
 }
 
-// Keep server alive (ping every 5 minutes)
 setInterval(() => {
   console.log(`Pinging self at ${getIstTime()} to keep instance alive`);
   axios
     .get(`${RAILWAY_URL}/ping`)
     .catch((err) => console.error('Ping failed:', err.message));
 }, 5 * 60 * 1000);
+
+initializeOpenAiUsage().catch(console.error);
+
+// Constants and helper functions
+const ADS_TO_WATCH = 10;
+const COOLDOWN_MINUTES = 15;
+const processedSnapshots = new Map();
+
+function isValidOneSignalId(id) {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return typeof id === 'string' && uuidRegex.test(id);
+}
+
+process.env.TZ = 'Asia/Kolkata';
+const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID;
+const ONESIGNAL_API_KEY = process.env.ONESIGNAL_API_KEY;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const RAILWAY_URL = process.env.RAILWAY_URL || 'https://vidalyzer-backend-production.up.railway.app';
+
+if (!ONESIGNAL_APP_ID) {
+  console.error('ONESIGNAL_APP_ID is required but not set. Exiting.');
+  process.exit(1);
+}
+if (!ONESIGNAL_API_KEY) {
+  console.error('ONESIGNAL_API_KEY is required but not set. Exiting.');
+  process.exit(1);
+}
+if (!OPENAI_API_KEY) {
+  console.error('OPENAI_API_KEY is required but not set. Exiting.');
+  process.exit(1);
+}
+if (!process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_CLIENT_EMAIL || !process.env.FIREBASE_PRIVATE_KEY) {
+  console.error('Firebase credentials incomplete. Exiting.');
+  process.exit(1);
+}
+
+console.log('Server starting at', new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+console.log('Timezone:', process.env.TZ);
