@@ -24,42 +24,9 @@ try {
 }
 const db = getFirestore();
 
-// OpenAI usage tracking
-const OPENAI_DAILY_LIMIT = 6;
-let openAiCallCount = 0;
-const openAiUsageRef = db.collection('system').doc('openai_usage');
-
-async function initializeOpenAiUsage() {
-  const now = new Date();
-  const istNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-  const startOfDay = new Date(istNow.setHours(0, 0, 0, 0)).getTime();
-  const usageDoc = await openAiUsageRef.get();
-  if (!usageDoc.exists || usageDoc.data().lastReset < startOfDay) {
-    await openAiUsageRef.set({ count: 0, lastReset: startOfDay });
-    openAiCallCount = 0;
-    console.log('OpenAI usage reset for new day at', getIstTime());
-  } else {
-    openAiCallCount = usageDoc.data().count;
-    console.log(`OpenAI usage initialized: ${openAiCallCount}/${OPENAI_DAILY_LIMIT} calls at`, getIstTime());
-  }
-}
-
 async function generateNotificationMessage(type = 'ad', userId = null) {
   console.log(`Generating notification for type: ${type}, userId: ${userId || 'none'}`);
   try {
-    const usageDoc = await openAiUsageRef.get();
-    if (usageDoc.data().count >= OPENAI_DAILY_LIMIT) {
-      console.warn('OpenAI daily limit reached, using fallback message');
-      const fallbacks = {
-        ad: 'Watch ads to boost your channels! 📈',
-        cooldown: 'Ad cooldown over! Grow now! ⏰',
-        motivational: 'Maximize growth with Vidalyzer! 🚀',
-        subscription: 'Premium activated! Excel now! 🎉',
-        coin_purchase: 'Coins added! Elevate your growth! 💰',
-      };
-      return fallbacks[type] || 'Boost your channels now! 🚀';
-    }
-
     let prompt;
     const tones = ['inspirational', 'empowering', 'professional'];
     const randomTone = tones[Math.floor(Math.random() * tones.length)];
@@ -100,8 +67,6 @@ async function generateNotificationMessage(type = 'ad', userId = null) {
     );
     const message = response.data.choices[0].message.content.trim();
     console.log(`Generated message for ${type}: ${message}`);
-    await openAiUsageRef.update({ count: usageDoc.data().count + 1 });
-    openAiCallCount++;
     return message.length <= 50 ? message : message.substring(0, 50).trim() + '…';
   } catch (error) {
     console.error(`Error generating notification for type ${type}:`, error.response ? error.response.data : error.message);
@@ -134,7 +99,7 @@ async function sendNotification(message, target = 'All', oneSignalId = null, ret
       const notificationData = {
         app_id: ONESIGNAL_APP_ID,
         contents: { en: message },
-        headings: { en: 'Vidalyzer Success! 🎯' }, // Updated heading for professionalism
+        headings: { en: 'Vidalyzer Success! 🎯' },
       };
       if (oneSignalId) {
         notificationData.include_player_ids = [oneSignalId];
@@ -541,8 +506,6 @@ setInterval(() => {
     .get(`${RAILWAY_URL}/ping`)
     .catch((err) => console.error('Ping failed:', err.message));
 }, 5 * 60 * 1000);
-
-initializeOpenAiUsage().catch(console.error);
 
 // Constants and helper functions
 const ADS_TO_WATCH = 10;
