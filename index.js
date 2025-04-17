@@ -290,8 +290,16 @@ app.post('/update-onesignal', async (req, res) => {
   try {
     const userRef = db.collection('users').doc(userId);
     const userDoc = await userRef.get();
-    await userRef.set({ oneSignalId }, { merge: true });
-    console.log(`update-onesignal: Updated oneSignalId for user ${userId}: ${oneSignalId}`);
+    const currentData = userDoc.exists ? userDoc.data() : {};
+    console.log(`Current oneSignalId for ${userId}: ${currentData.oneSignalId}`);
+
+    // Only update if oneSignalId is valid and different, avoid null/empty overwrites
+    if (oneSignalId && oneSignalId !== currentData.oneSignalId) {
+      await userRef.set({ oneSignalId }, { merge: true });
+      console.log(`update-onesignal: Updated oneSignalId for user ${userId} to ${oneSignalId}`);
+    } else {
+      console.log(`update-onesignal: No update needed for ${userId}, oneSignalId unchanged or invalid`);
+    }
 
     // Send welcome notification on first login
     if (userDoc.exists && userDoc.data().firstLogin === true) {
