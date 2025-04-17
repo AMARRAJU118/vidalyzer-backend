@@ -19,10 +19,15 @@ try {
   });
   console.log('Firebase initialized successfully');
 } catch (error) {
-  console.error('Firebase initialization failed:', error.message);
+  console.error('Firebase initialization failed:', error.message, error.stack);
   process.exit(1);
 }
 const db = getFirestore();
+
+// Global unhandled rejection handler
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason.message, reason.stack);
+});
 
 async function generateNotificationMessage(type = 'ad', userId = null) {
   console.log(`Generating notification for type: ${type}, userId: ${userId || 'none'}`);
@@ -155,6 +160,30 @@ Create short, attention-grabbing push notifications (max 10–15 words) to:
 - “Earned coins! Grab premium features fast! 🎯”
 - “💪 Coins in hand—win big now! 💰”`;
         break;
+      case 'welcome':
+        prompt = `You are an assistant helping write engaging push notifications for the Vidalyzer app, an AI-powered SEO Toolkit for YouTube & Instagram.
+
+The app includes a feature called "Watch Ads & Get Coins", where users can:
+- Watch up to 10 ads daily
+- Earn coins for each ad watched
+- Wait 15 minutes between each ad watch
+- Use coins to unlock premium features
+
+🎯 Objective:
+Create short, attention-grabbing push notifications (max 10–15 words) to:
+- Welcome new users
+- Encourage initial engagement
+
+✨ Tone:
+- ${randomTone}
+
+💬 Sample Notification Themes:
+- “Welcome to Vidalyzer! Grow your channels now! 🎉”
+- “💰 Start earning coins—watch ads today! 🚀”
+- “New user? Boost growth with Vidalyzer! 💸”
+- “Join the journey—unlock power now! 🎯”
+- “Hello! Skyrocket your growth with us! 💪”`;
+        break;
       default:
         prompt = `You are an assistant helping write engaging push notifications for the Vidalyzer app, an AI-powered SEO Toolkit for YouTube & Instagram.
 
@@ -199,13 +228,14 @@ Create short, attention-grabbing push notifications (max 10–15 words) to:
     console.log(`Generated message for ${type}: ${message}`);
     return message.length <= 50 ? message : message.substring(0, 50).trim() + '…';
   } catch (error) {
-    console.error(`Error generating notification for type ${type}:`, error.response ? error.response.data : error.message);
+    console.error(`Error generating notification for type ${type}:`, error.response ? error.response.data : error.message, error.stack);
     const fallbacks = {
       ad: 'Watch ads to boost your channels! 📈',
       cooldown: 'Ad cooldown over! Grow now! ⏰',
       motivational: 'Maximize growth with Vidalyzer! 🚀',
       subscription: 'Premium activated! Excel now! 🎉',
       coin_purchase: 'Coins added! Elevate your growth! 💰',
+      welcome: 'Welcome to Vidalyzer! Grow now! 🎉',
     };
     const fallback = fallbacks[type] || 'Boost your channels now! 🚀';
     console.log(`Using fallback message for ${type}: ${fallback}`);
@@ -284,6 +314,7 @@ async function sendNotification(message, target = 'All', oneSignalId = null, typ
         userId,
         error: error.response ? error.response.data : error.message,
         status: error.response ? error.response.status : null,
+        stack: error.stack,
       });
       if (i < retries - 1 && error.response?.status === 429) {
         console.log(`Rate limited, retrying in ${i + 1}s...`);
@@ -300,16 +331,20 @@ async function sendNotification(message, target = 'All', oneSignalId = null, typ
 
 // Save notification to Firestore
 async function saveNotificationToFirestore(message, type, userId, success) {
-  const collectionName = `${type}_notifications`;
-  const docId = new Date().toISOString().replace(/[:.]/g, '-');
-  await db.collection(collectionName).doc(docId).set({
-    message,
-    type,
-    userId: userId || null,
-    timestamp: new Date().toISOString(),
-    success,
-  });
-  console.log(`Notification saved to ${collectionName}/${docId}:`, { message, userId, success });
+  try {
+    const collectionName = `${type}_notifications`;
+    const docId = new Date().toISOString().replace(/[:.]/g, '-');
+    await db.collection(collectionName).doc(docId).set({
+      message,
+      type,
+      userId: userId || null,
+      timestamp: new Date().toISOString(),
+      success,
+    });
+    console.log(`Notification saved to ${collectionName}/${docId}:`, { message, userId, success });
+  } catch (error) {
+    console.error(`Error saving notification to Firestore for ${type}:`, error.message, error.stack);
+  }
 }
 
 // Check and update ad watch status
@@ -484,7 +519,7 @@ app.post('/update-onesignal', async (req, res) => {
 
     res.send({ message: 'OneSignal ID updated successfully' });
   } catch (error) {
-    console.error(`update-onesignal: Error updating oneSignalId for user ${userId}:`, error.message);
+    console.error(`update-onesignal: Error updating oneSignalId for user ${userId}:`, error.message, error.stack);
     res.status(500).send('Error updating OneSignal ID');
   }
 });
@@ -514,7 +549,7 @@ app.post('/test-notification', async (req, res) => {
       details: { userId, oneSignalId, message, type },
     });
   } catch (error) {
-    console.error('test-notification: Error:', error.message);
+    console.error('test-notification: Error:', error.message, error.stack);
     res.status(500).send('Error sending test notification');
   }
 });
@@ -569,12 +604,12 @@ db.collection('Premium').onSnapshot(
           }
         }
       } catch (error) {
-        console.error('Error in Premium snapshot listener for doc', change.doc.id, ':', error.message);
+        console.error('Error in Premium snapshot listener for doc', change.doc.id, ':', error.message, error.stack);
       }
     });
   },
   (error) => {
-    console.error('Premium snapshot listener failed:', error.message);
+    console.error('Premium snapshot listener failed:', error.message, error.stack);
   }
 );
 
@@ -654,12 +689,12 @@ db.collection('users').onSnapshot(
           }
         }
       } catch (error) {
-        console.error('Error in users snapshot for user', change.doc.id, ':', error.message);
+        console.error('Error in users snapshot for user', change.doc.id, ':', error.message, error.stack);
       }
     });
   },
   (error) => {
-    console.error('Users snapshot listener failed:', error.message);
+    console.error('Users snapshot listener failed:', error.message, error.stack);
   }
 );
 
@@ -671,7 +706,7 @@ try {
     scheduleNotifications(); // Start notification scheduling
   });
 } catch (error) {
-  console.error('Failed to start server:', error.message);
+  console.error('Failed to start server:', error.message, error.stack);
   process.exit(1);
 }
 
@@ -679,7 +714,7 @@ setInterval(() => {
   console.log(`Pinging self at ${getIstTime()} to keep instance alive`);
   axios
     .get(`${RAILWAY_URL}/ping`)
-    .catch((err) => console.error('Ping failed:', err.message));
+    .catch((err) => console.error('Ping failed:', err.message, err.stack));
 }, 5 * 60 * 1000);
 
 // Constants and helper functions
