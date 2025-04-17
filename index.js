@@ -28,27 +28,157 @@ async function generateNotificationMessage(type = 'ad', userId = null) {
   console.log(`Generating notification for type: ${type}, userId: ${userId || 'none'}`);
   try {
     let prompt;
-    const tones = ['inspirational', 'empowering', 'professional'];
+    const tones = ['exciting', 'motivational', 'urgent', 'reward-focused'];
     const randomTone = tones[Math.floor(Math.random() * tones.length)];
 
     switch (type) {
       case 'ad':
-        prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user to watch ads. Inspirational: "Ads fuel your growth journey! 🌟", Empowering: "Watch ads, own your success! 💪", Professional: "Boost channels with ad coins! 📊"`;
+        prompt = `You are an assistant helping write engaging push notifications for the Vidalyzer app, an AI-powered SEO Toolkit for YouTube & Instagram.
+
+The app includes a feature called "Watch Ads & Get Coins", where users can:
+- Watch up to 10 ads daily
+- Earn coins for each ad watched
+- Wait 15 minutes between each ad watch
+- Use coins to unlock premium features
+
+🎯 Objective:
+Create short, attention-grabbing push notifications (max 10–15 words) to:
+- Encourage users to watch more ads
+- Promote the benefits of earning coins
+- Boost daily engagement and retention
+
+✨ Tone:
+- ${randomTone}
+
+💬 Sample Notification Themes:
+- “Your cooldown’s over! Earn more coins now 🎉”
+- “💰 Ready for more coins? Watch the next ad!”
+- “New day, new rewards. Watch 10 ads & win big! 🚀”
+- “15 min’s up! Time to earn your next coin 💸”
+- “Max out your rewards today—10 ads = major coin haul!”`;
         break;
       case 'cooldown':
-        prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user noting ad cooldown is over. Inspirational: "Rise again! Ads await you! 🌟", Empowering: "Cooldown done, seize growth! 💪", Professional: "Ad cooldown ended. Act now! 📈"`;
+        prompt = `You are an assistant helping write engaging push notifications for the Vidalyzer app, an AI-powered SEO Toolkit for YouTube & Instagram.
+
+The app includes a feature called "Watch Ads & Get Coins", where users can:
+- Watch up to 10 ads daily
+- Earn coins for each ad watched
+- Wait 15 minutes between each ad watch
+- Use coins to unlock premium features
+
+🎯 Objective:
+Create short, attention-grabbing push notifications (max 10–15 words) to:
+- Remind users when their cooldown timer ends
+- Encourage users to watch more ads
+- Boost daily engagement and retention
+
+✨ Tone:
+- ${randomTone}
+
+💬 Sample Notification Themes:
+- “Your cooldown’s over! Earn more coins now 🎉”
+- “15 min’s up! Time to earn your next coin 💸”
+- “Cooldown done! Grab your next reward fast! 🚀”
+- “Time’s up! Watch ads and boost your coins! 💰”
+- “Act now—cooldown’s over, earn big today! 🎯”`;
         break;
       case 'motivational':
-        prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user to use the app daily. Inspirational: "Shine daily with Vidalyzer! 🌟", Empowering: "Grow stronger every day! 💪", Professional: "Optimize growth daily! 📊"`;
+        prompt = `You are an assistant helping write engaging push notifications for the Vidalyzer app, an AI-powered SEO Toolkit for YouTube & Instagram.
+
+The app includes a feature called "Watch Ads & Get Coins", where users can:
+- Watch up to 10 ads daily
+- Earn coins for each ad watched
+- Wait 15 minutes between each ad watch
+- Use coins to unlock premium features
+
+🎯 Objective:
+Create short, attention-grabbing push notifications (max 10–15 words) to:
+- Encourage users to watch more ads
+- Promote the benefits of earning coins
+- Boost daily engagement and retention
+
+✨ Tone:
+- ${randomTone}
+
+💬 Sample Notification Themes:
+- “New day, new rewards. Watch 10 ads & win big! 🚀”
+- “Max out your rewards today—10 ads = major coin haul!”
+- “💰 Boost your growth! Watch ads daily now!”
+- “Unlock power—earn coins with every ad watch! 🎉”
+- “Seize the day! 10 ads = epic rewards! 💸”`;
         break;
       case 'subscription':
-        prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user celebrating a subscription. Inspirational: "Premium unlocks your potential! 🌟", Empowering: "Premium power is yours! 💪", Professional: "Premium activated! Grow fast! 📈"`;
+        prompt = `You are an assistant helping write engaging push notifications for the Vidalyzer app, an AI-powered SEO Toolkit for YouTube & Instagram.
+
+The app includes a feature called "Watch Ads & Get Coins", where users can:
+- Watch up to 10 ads daily
+- Earn coins for each ad watched
+- Wait 15 minutes between each ad watch
+- Use coins to unlock premium features
+
+🎯 Objective:
+Create short, attention-grabbing push notifications (max 10–15 words) to:
+- Promote the benefits of earning coins
+- Boost daily engagement and retention
+
+✨ Tone:
+- ${randomTone}
+
+💬 Sample Notification Themes:
+- “Premium unlocked! Earn more coins now! 🎉”
+- “💰 Premium power—watch ads, win big today! 🚀”
+- “Unlock premium perks with your coin haul! 💸”
+- “Go premium—max rewards await your ads! 🎯”
+- “Premium boost! Earn coins faster now! 💪”`;
         break;
       case 'coin_purchase':
-        prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user celebrating coin purchases. Inspirational: "Coins pave your success! 🌟", Empowering: "Coins fuel your rise! 💪", Professional: "Coins secured! Boost now! 📊"`;
+        prompt = `You are an assistant helping write engaging push notifications for the Vidalyzer app, an AI-powered SEO Toolkit for YouTube & Instagram.
+
+The app includes a feature called "Watch Ads & Get Coins", where users can:
+- Watch up to 10 ads daily
+- Earn coins for each ad watched
+- Wait 15 minutes between each ad watch
+- Use coins to unlock premium features
+
+🎯 Objective:
+Create short, attention-grabbing push notifications (max 10–15 words) to:
+- Promote the benefits of earning coins
+- Boost daily engagement and retention
+
+✨ Tone:
+- ${randomTone}
+
+💬 Sample Notification Themes:
+- “Coins earned! Unlock premium now! 🎉”
+- “💰 New coins ready—boost your growth! 🚀”
+- “Coin haul secured! Level up today! 💸”
+- “Earned coins! Grab premium features fast! 🎯”
+- “💪 Coins in hand—win big now! 💰”`;
         break;
       default:
-        prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user. Inspirational: "Elevate your brand today! 🌟", Empowering: "Take charge of your growth! 💪", Professional: "Enhance your reach now! 📈"`;
+        prompt = `You are an assistant helping write engaging push notifications for the Vidalyzer app, an AI-powered SEO Toolkit for YouTube & Instagram.
+
+The app includes a feature called "Watch Ads & Get Coins", where users can:
+- Watch up to 10 ads daily
+- Earn coins for each ad watched
+- Wait 15 minutes between each ad watch
+- Use coins to unlock premium features
+
+🎯 Objective:
+Create short, attention-grabbing push notifications (max 10–15 words) to:
+- Encourage users to watch more ads
+- Promote the benefits of earning coins
+- Boost daily engagement and retention
+
+✨ Tone:
+- ${randomTone}
+
+💬 Sample Notification Themes:
+- “Your cooldown’s over! Earn more coins now 🎉”
+- “💰 Ready for more coins? Watch the next ad!”
+- “New day, new rewards. Watch 10 ads & win big! 🚀”
+- “15 min’s up! Time to earn your next coin 💸”
+- “Max out your rewards today—10 ads = major coin haul!”`;
     }
 
     const response = await axios.post(
