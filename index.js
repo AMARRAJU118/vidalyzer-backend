@@ -9,25 +9,37 @@ app.use(express.json());
 const port = process.env.PORT || 10000;
 
 // Firebase Admin SDK initialization
-initializeApp({
-  credential: require('firebase-admin').credential.cert({
-    projectId: process.env.FIREBASE_PROJECT_ID,
-    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-    privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-  }),
-});
+try {
+  initializeApp({
+    credential: require('firebase-admin').credential.cert({
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+    }),
+  });
+  console.log('Firebase initialized successfully');
+} catch (error) {
+  console.error('Firebase initialization failed:', error.message);
+  process.exit(1);
+}
 const db = getFirestore();
 
 // Environment variables with validation
 const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID || 'd2288872-b12c-4974-af8c-e98665ea2564';
 const ONESIGNAL_API_KEY = process.env.ONESIGNAL_API_KEY;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const RAILWAY_URL = process.env.RAILWAY_URL || 'https://your-railway-app.up.railway.app';
+
 if (!ONESIGNAL_API_KEY) {
   console.error('ONESIGNAL_API_KEY is required but not set. Exiting.');
   process.exit(1);
 }
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 if (!OPENAI_API_KEY) {
   console.error('OPENAI_API_KEY is required but not set. Exiting.');
+  process.exit(1);
+}
+if (!process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_CLIENT_EMAIL || !process.env.FIREBASE_PRIVATE_KEY) {
+  console.error('Firebase credentials incomplete. Exiting.');
   process.exit(1);
 }
 
@@ -44,8 +56,13 @@ function isValidOneSignalId(id) {
   return typeof id === 'string' && uuidRegex.test(id);
 }
 
+// Log server startup and timezone
+console.log('Server starting at', new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+console.log('Timezone:', process.env.TZ || 'Not set');
+
 // Generate notification message with varied tones
 async function generateNotificationMessage(type = 'ad', userId = null) {
+  console.log(`Generating notification for type: ${type}, userId: ${userId || 'none'}`);
   try {
     let prompt;
     const tones = ['friend', 'girlfriend', 'boyfriend'];
@@ -85,6 +102,7 @@ async function generateNotificationMessage(type = 'ad', userId = null) {
       }
     );
     const message = response.data.choices[0].message.content.trim();
+    console.log(`Generated message for ${type}: ${message}`);
     return message.length <= 50 ? message : message.substring(0, 50).trim() + '…';
   } catch (error) {
     console.error(`Error generating notification for type ${type}:`, error.response ? error.response.data : error.message);
@@ -95,7 +113,9 @@ async function generateNotificationMessage(type = 'ad', userId = null) {
       subscription: ['Yo, you’re premium now! Rock it! 🎉', 'OMG babe, premium vibes! So proud! 😘', 'Premium status, bro! You’re a star! 🌟'],
       coin_purchase: ['Nice! Coins for your growth! 🙌', 'Sweetie, those coins are 🔥! Love it!', 'Coins grabbed, dude! Let’s grow! 💪'],
     };
-    return fallbacks[type] ? fallbacks[type][Math.floor(Math.random() * fallbacks[type].length)] : 'Hey cutie, boost your reels now! 🥰';
+    const fallback = fallbacks[type] ? fallbacks[type][Math.floor(Math.random() * fallbacks[type].length)] : 'Hey cutie, boost your reels now! 🥰';
+    console.log(`Using fallback message for ${type}: ${fallback}`);
+    return fallback;
   }
 }
 
@@ -107,18 +127,17 @@ async function sendNotification(message, target = 'All', oneSignalId = null) {
       console.warn(`Invalid oneSignalId format: ${oneSignalId}`);
       return false;
     }
+    console.log('Attempting to send notification:', { message, target, oneSignalId });
     const notificationData = {
       app_id: ONESIGNAL_APP_ID,
       contents: { en: message },
       headings: { en: 'Vidalyzer Boost! 🎉' },
     };
-
     if (oneSignalId) {
       notificationData.include_player_ids = [oneSignalId];
     } else {
       notificationData.included_segments = [target];
     }
-
     const response = await axios.post(
       'https://onesignal.com/api/v1/notifications',
       notificationData,
@@ -132,7 +151,12 @@ async function sendNotification(message, target = 'All', oneSignalId = null) {
     console.log(`Notification sent successfully to ${oneSignalId || target}: ${message}`, response.data);
     return true;
   } catch (error) {
-    console.error('Error sending notification:', error.response ? error.response.data : error.message);
+    console.error('Error sending notification:', {
+      message,
+      target,
+      oneSignalId,
+      error: error.response ? error.response.data : error.message,
+    });
     return false;
   }
 }
@@ -143,6 +167,7 @@ async function checkAdStatus(userId) {
     console.error('Invalid userId in checkAdStatus');
     return null;
   }
+  console.log(`Checking ad status for user: ${userId}`);
   const userRef = db.collection('users').doc(userId);
   const doc = await userRef.get();
   if (!doc.exists) {
@@ -153,11 +178,14 @@ async function checkAdStatus(userId) {
     console.log(`Initialized user document for ${userId}`);
     return { adsWatched: 0, lastAdTime: null, coins: 0, recentRewards: [], oneSignalId: '' };
   }
-  return doc.data();
+  const data = doc.data();
+  console.log(`User data retrieved:`, { userId, adsWatched: data.adsWatched, oneSignalId: data.oneSignalId });
+  return data;
 }
 
 // Award coins and handle rewards
 async function awardCoins(userId) {
+  console.log(`Awarding coins for user: ${userId}`);
   const userData = await checkAdStatus(userId);
   if (!userData) return { coins: 0, message: 'Invalid user data' };
   if (userData.adsWatched >= ADS_TO_WATCH) {
@@ -174,47 +202,54 @@ async function awardCoins(userId) {
       coins: newCoins,
       recentRewards: rewards,
     });
+    console.log(`Awarded ${coins} coins to user ${userId}`);
     return { coins, message: `Wow! Earned ${coins} coins to grow! 🎉` };
   }
   return { coins: 0, message: 'Watch 10 ads to grow your channels!' };
 }
 
-// Schedule notifications for IST (2-3 ad notifications daily, motivational notifications)
-const istOffset = 5.5 * 60 * 60 * 1000;
-const getIstTime = () => new Date(Date.now() + istOffset).toLocaleString('en-US', { timeZone: 'Asia/Kolkata' });
+// Schedule notifications for IST
+const getIstTime = () => new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' });
 
-// Schedule ad notifications at specific IST times: 10 AM, 2 PM, 6 PM
+// Test cron to verify OneSignal (every 5 minutes)
+cron.schedule('*/5 * * * *', async () => {
+  console.log('Test cron triggered at', getIstTime());
+  const success = await sendNotification('Test notification from Vidalyzer!', 'Active Users');
+  console.log(`Test notification ${success ? 'sent' : 'failed'} at ${getIstTime()}`);
+}, { scheduled: true, timezone: 'Asia/Kolkata' });
+
+// Schedule ad notifications: 10 AM, 2 PM, 6 PM IST
 cron.schedule('0 10 * * *', async () => {
-  console.log('Scheduling ad notification at', getIstTime());
+  console.log('Ad cron (10 AM) triggered at', getIstTime());
   const adMessage = await generateNotificationMessage('ad');
   const success = await sendNotification(adMessage, 'Active Users');
   console.log(`Ad notification ${success ? 'sent' : 'failed'} at ${getIstTime()}: ${adMessage}`);
 }, { scheduled: true, timezone: 'Asia/Kolkata' });
 
 cron.schedule('0 14 * * *', async () => {
-  console.log('Scheduling ad notification at', getIstTime());
+  console.log('Ad cron (2 PM) triggered at', getIstTime());
   const adMessage = await generateNotificationMessage('ad');
   const success = await sendNotification(adMessage, 'Active Users');
   console.log(`Ad notification ${success ? 'sent' : 'failed'} at ${getIstTime()}: ${adMessage}`);
 }, { scheduled: true, timezone: 'Asia/Kolkata' });
 
 cron.schedule('0 18 * * *', async () => {
-  console.log('Scheduling ad notification at', getIstTime());
+  console.log('Ad cron (6 PM) triggered at', getIstTime());
   const adMessage = await generateNotificationMessage('ad');
   const success = await sendNotification(adMessage, 'Active Users');
   console.log(`Ad notification ${success ? 'sent' : 'failed'} at ${getIstTime()}: ${adMessage}`);
 }, { scheduled: true, timezone: 'Asia/Kolkata' });
 
-// Schedule motivational notifications at 9 AM and 4 PM
+// Schedule motivational notifications: 9 AM, 4 PM IST
 cron.schedule('0 9 * * *', async () => {
-  console.log('Scheduling motivational notification at', getIstTime());
+  console.log('Motivational cron (9 AM) triggered at', getIstTime());
   const motivationalMessage = await generateNotificationMessage('motivational');
   const success = await sendNotification(motivationalMessage, 'Active Users');
   console.log(`Motivational notification ${success ? 'sent' : 'failed'} at ${getIstTime()}: ${motivationalMessage}`);
 }, { scheduled: true, timezone: 'Asia/Kolkata' });
 
 cron.schedule('0 16 * * *', async () => {
-  console.log('Scheduling motivational notification at', getIstTime());
+  console.log('Motivational cron (4 PM) triggered at', getIstTime());
   const motivationalMessage = await generateNotificationMessage('motivational');
   const success = await sendNotification(motivationalMessage, 'Active Users');
   console.log(`Motivational notification ${success ? 'sent' : 'failed'} at ${getIstTime()}: ${motivationalMessage}`);
@@ -223,10 +258,16 @@ cron.schedule('0 16 * * *', async () => {
 // API endpoint to track ad watching
 app.post('/watch-ad', async (req, res) => {
   const { userId } = req.body;
-  if (!userId) return res.status(400).send('User ID required');
-
+  if (!userId) {
+    console.error('watch-ad: Missing userId');
+    return res.status(400).send('User ID required');
+  }
+  console.log(`watch-ad endpoint called for user: ${userId}`);
   const userData = await checkAdStatus(userId);
-  if (!userData) return res.status(500).send('Error accessing user data');
+  if (!userData) {
+    console.error(`watch-ad: Failed to access user data for ${userId}`);
+    return res.status(500).send('Error accessing user data');
+  }
   const now = new Date();
   const lastAdTime = userData.lastAdTime ? new Date(userData.lastAdTime) : null;
   const cooldownElapsed = !lastAdTime || (now - lastAdTime) / (1000 * 60) >= COOLDOWN_MINUTES;
@@ -235,11 +276,14 @@ app.post('/watch-ad', async (req, res) => {
     await db.collection('users').doc(userId).update({
       adsWatched: userData.adsWatched + 1,
     });
-    res.send({ message: `Ad ${userData.adsWatched + 1}/10 watched! Grow soon!` });
+    console.log(`Ad watched for user ${userId}: ${userData.adsWatched + 1}/${ADS_TO_WATCH}`);
+    res.send({ message: `Ad ${userData.adsWatched + 1}/${ADS_TO_WATCH} watched! Grow soon!` });
   } else if (!cooldownElapsed) {
+    console.log(`watch-ad: Cooldown active for user ${userId}`);
     res.status(429).send({ message: `Cooldown active. Wait ${COOLDOWN_MINUTES} minutes.` });
   } else {
     const { coins, message } = await awardCoins(userId);
+    console.log(`watch-ad: Award result for ${userId}: ${message}, coins: ${coins}`);
     res.send({ message, coins });
   }
 });
@@ -247,10 +291,16 @@ app.post('/watch-ad', async (req, res) => {
 // API endpoint to spend coins
 app.post('/buy-feature', async (req, res) => {
   const { userId, feature, quantity } = req.body;
-  if (!userId || !feature || !quantity) return res.status(400).send('User ID, feature, and quantity required');
-
+  if (!userId || !feature || !quantity) {
+    console.error('buy-feature: Missing parameters', { userId, feature, quantity });
+    return res.status(400).send('User ID, feature, and quantity required');
+  }
+  console.log(`buy-feature endpoint called:`, { userId, feature, quantity });
   const userData = await checkAdStatus(userId);
-  if (!userData) return res.status(500).send('Error accessing user data');
+  if (!userData) {
+    console.error(`buy-feature: Failed to access user data for ${userId}`);
+    return res.status(500).send('Error accessing user data');
+  }
   let cost = 0;
   switch (feature) {
     case 'followers':
@@ -260,6 +310,7 @@ app.post('/buy-feature', async (req, res) => {
       cost = quantity * 20;
       break;
     default:
+      console.error(`buy-feature: Invalid feature ${feature} for user ${userId}`);
       return res.status(400).send('Invalid feature');
   }
 
@@ -268,8 +319,10 @@ app.post('/buy-feature', async (req, res) => {
       coins: userData.coins - cost,
       recentRewards: [...(userData.recentRewards || []), { name: `${quantity} ${feature}`, timestamp: new Date().toISOString() }].slice(-5),
     });
+    console.log(`buy-feature: Purchased ${quantity} ${feature} for user ${userId}, cost: ${cost}`);
     res.send({ message: `Bought ${quantity} ${feature} to skyrocket growth!` });
   } else {
+    console.log(`buy-feature: Insufficient coins for user ${userId}, needed: ${cost}, available: ${userData.coins}`);
     res.status(402).send({ message: 'Need more coins to grow!' });
   }
 });
@@ -278,123 +331,145 @@ app.post('/buy-feature', async (req, res) => {
 app.post('/update-onesignal', async (req, res) => {
   const { userId, oneSignalId } = req.body;
   if (!userId || !oneSignalId) {
-    console.error(`Missing parameters: userId=${userId}, oneSignalId=${oneSignalId}`);
+    console.error(`update-onesignal: Missing parameters: userId=${userId}, oneSignalId=${oneSignalId}`);
     return res.status(400).send('User ID and OneSignal ID required');
   }
   if (!isValidOneSignalId(oneSignalId)) {
-    console.warn(`Invalid oneSignalId format for user ${userId}: ${oneSignalId}`);
+    console.warn(`update-onesignal: Invalid oneSignalId format for user ${userId}: ${oneSignalId}`);
     return res.status(400).send('Invalid OneSignal ID format');
   }
 
   try {
     await db.collection('users').doc(userId).set({ oneSignalId }, { merge: true });
-    console.log(`Updated oneSignalId for user ${userId}: ${oneSignalId}`);
+    console.log(`update-onesignal: Updated oneSignalId for user ${userId}: ${oneSignalId}`);
     res.send({ message: 'OneSignal ID updated successfully' });
   } catch (error) {
-    console.error(`Error updating oneSignalId for user ${userId}:`, error.message);
+    console.error(`update-onesignal: Error updating oneSignalId for user ${userId}:`, error.message);
     res.status(500).send('Error updating OneSignal ID');
   }
 });
 
 // Firestore listener for new subscriptions
-db.collection('Premium').onSnapshot((snapshot) => {
-  snapshot.docChanges().forEach(async (change) => {
-    try {
-      const data = change.doc.data();
-      const userId = data.userId || change.doc.id;
-      if (!userId) {
-        console.error('Invalid or missing userId in Premium collection snapshot:', change.doc.id, data);
-        return;
-      }
-
-      const snapshotKey = `${userId}:${change.type}:${data.subscriptionType || 'unknown'}:${change.doc.id}`;
-      const lastProcessed = processedSnapshots.get(snapshotKey);
-      const now = Date.now();
-      if (lastProcessed && now - lastProcessed < 300000) {
-        console.log(`Skipping duplicate snapshot for Premium doc ${change.doc.id}, user ${userId}`);
-        return;
-      }
-      processedSnapshots.set(snapshotKey, now);
-      setTimeout(() => processedSnapshots.delete(snapshotKey), 300000);
-
-      if (change.type === 'added' || (change.type === 'modified' && data.isPremiumUser)) {
-        console.log(`Processing subscription for user ${userId}, type: ${data.subscriptionType || 'unknown'}`);
-        if (!data.userId) {
-          await db.collection('Premium').doc(change.doc.id).update({ userId });
-          console.log(`Fixed missing userId for Premium doc ${change.doc.id}`);
+db.collection('Premium').onSnapshot(
+  (snapshot) => {
+    console.log('Premium snapshot triggered at', getIstTime(), 'changes:', snapshot.docChanges().length);
+    snapshot.docChanges().forEach(async (change) => {
+      try {
+        const data = change.doc.data();
+        const userId = data.userId || change.doc.id;
+        console.log('Processing Premium change:', { userId, type: change.type, data });
+        if (!userId) {
+          console.error('Invalid or missing userId in Premium snapshot:', change.doc.id, data);
+          return;
         }
 
-        const userDoc = await db.collection('users').doc(userId).get();
-        if (userDoc.exists && userDoc.data().oneSignalId && isValidOneSignalId(userDoc.data().oneSignalId)) {
-          const oneSignalId = userDoc.data().oneSignalId;
-          const message = await generateNotificationMessage('subscription');
-          const success = await sendNotification(message, null, oneSignalId);
-          console.log(`Subscription notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}`);
-        } else {
-          console.warn(`No valid oneSignalId found for user ${userId}`, {
-            userId,
-            exists: userDoc.exists,
-            oneSignalId: userDoc.data()?.oneSignalId,
-          });
+        const snapshotKey = `${userId}:${change.type}:${data.subscriptionType || 'unknown'}:${change.doc.id}`;
+        const lastProcessed = processedSnapshots.get(snapshotKey);
+        const now = Date.now();
+        if (lastProcessed && now - lastProcessed < 300000) {
+          console.log(`Skipping duplicate Premium snapshot for doc ${change.doc.id}, user ${userId}`);
+          return;
         }
+        processedSnapshots.set(snapshotKey, now);
+        setTimeout(() => processedSnapshots.delete(snapshotKey), 300000);
+
+        if (change.type === 'added' || (change.type === 'modified' && data.isPremiumUser)) {
+          console.log(`Processing subscription for user ${userId}, type: ${data.subscriptionType || 'unknown'}`);
+          if (!data.userId) {
+            await db.collection('Premium').doc(change.doc.id).update({ userId });
+            console.log(`Fixed missing userId for Premium doc ${change.doc.id}`);
+          }
+
+          const userDoc = await db.collection('users').doc(userId).get();
+          if (userDoc.exists && userDoc.data().oneSignalId && isValidOneSignalId(userDoc.data().oneSignalId)) {
+            const oneSignalId = userDoc.data().oneSignalId;
+            const message = await generateNotificationMessage('subscription');
+            const success = await sendNotification(message, null, oneSignalId);
+            console.log(`Subscription notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}`);
+          } else {
+            console.warn(`No valid oneSignalId found for user ${userId}`, {
+              userId,
+              exists: userDoc.exists,
+              oneSignalId: userDoc.data()?.oneSignalId,
+            });
+          }
+        }
+      } catch (error) {
+        console.error('Error in Premium snapshot listener for doc', change.doc.id, ':', error.message);
       }
-    } catch (error) {
-      console.error('Error in Premium snapshot listener:', error.message);
-    }
-  });
-});
+    });
+  },
+  (error) => {
+    console.error('Premium snapshot listener failed:', error.message);
+  }
+);
 
 // Firestore listener for coin purchases and cooldown
-db.collection('users').onSnapshot((snapshot) => {
-  snapshot.docChanges().forEach(async (change) => {
-    try {
-      const userId = change.doc.id;
-      if (!userId) {
-        console.error('Invalid userId in users collection snapshot:', change.doc.id);
-        return;
-      }
-      const userData = change.doc.data();
-      const oneSignalId = userData.oneSignalId;
-
-      if (change.type === 'modified') {
-        const oldData = change.oldIndex !== -1 ? snapshot.docs[change.oldIndex].data() : {};
-        if (userData.coins > (oldData.coins || 0) && !userData.lastAdTime && oneSignalId && isValidOneSignalId(oneSignalId)) {
-          const message = await generateNotificationMessage('coin_purchase');
-          const success = await sendNotification(message, null, oneSignalId);
-          console.log(`Coin purchase notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}`);
+db.collection('users').onSnapshot(
+  (snapshot) => {
+    console.log('Users snapshot triggered at', getIstTime(), 'changes:', snapshot.docChanges().length);
+    snapshot.docChanges().forEach(async (change) => {
+      try {
+        const userId = change.doc.id;
+        console.log('Processing user change:', { userId, type: change.type, data: change.doc.data() });
+        if (!userId) {
+          console.error('Invalid userId in users snapshot:', change.doc.id);
+          return;
         }
-      }
+        const userData = change.doc.data();
+        const oneSignalId = userData.oneSignalId;
 
-      if ((change.type === 'added' || change.type === 'modified') && userData.adCooldownEndTime && oneSignalId && isValidOneSignalId(oneSignalId)) {
-        const now = Date.now();
-        const cooldownEndTime = userData.adCooldownEndTime;
-        const timeUntilCooldownEnds = cooldownEndTime - now;
-
-        if (timeUntilCooldownEnds > 0 && timeUntilCooldownEnds < 24 * 60 * 60 * 1000) {
-          console.log(`Scheduling cooldown notification for ${userId} in ${timeUntilCooldownEnds / 1000} seconds`);
-          setTimeout(async () => {
-            const userDoc = await db.collection('users').doc(userId).get();
-            if (userDoc.exists && userDoc.data().adCooldownEndTime <= Date.now()) {
-              const message = await generateNotificationMessage('cooldown');
-              const success = await sendNotification(message, null, oneSignalId);
-              console.log(`Cooldown notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}`);
-            }
-          }, timeUntilCooldownEnds);
+        if (change.type === 'modified') {
+          const oldData = change.oldIndex !== -1 ? snapshot.docs[change.oldIndex].data() : {};
+          if (userData.coins > (oldData.coins || 0) && !userData.lastAdTime && oneSignalId && isValidOneSignalId(oneSignalId)) {
+            const message = await generateNotificationMessage('coin_purchase');
+            const success = await sendNotification(message, null, oneSignalId);
+            console.log(`Coin purchase notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}`);
+          }
         }
+
+        if ((change.type === 'added' || change.type === 'modified') && userData.adCooldownEndTime && oneSignalId && isValidOneSignalId(oneSignalId)) {
+          const now = Date.now();
+          const cooldownEndTime = userData.adCooldownEndTime;
+          const timeUntilCooldownEnds = cooldownEndTime - now;
+
+          if (timeUntilCooldownEnds > 0 && timeUntilCooldownEnds < 24 * 60 * 60 * 1000) {
+            console.log(`Scheduling cooldown notification for ${userId} in ${timeUntilCooldownEnds / 1000} seconds`);
+            setTimeout(async () => {
+              const userDoc = await db.collection('users').doc(userId).get();
+              if (userDoc.exists && userDoc.data().adCooldownEndTime <= Date.now()) {
+                const message = await generateNotificationMessage('cooldown');
+                const success = await sendNotification(message, null, oneSignalId);
+                console.log(`Cooldown notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}`);
+              } else {
+                console.log(`Cooldown notification skipped for ${userId}: userDoc exists=${userDoc.exists}, cooldownEndTime=${userDoc.data()?.adCooldownEndTime}`);
+              }
+            }, timeUntilCooldownEnds);
+          }
+        }
+      } catch (error) {
+        console.error('Error in users snapshot for user', change.doc.id, ':', error.message);
       }
-    } catch (error) {
-      console.error('Error processing users snapshot:', error.message);
-    }
-  });
-});
+    });
+  },
+  (error) => {
+    console.error('Users snapshot listener failed:', error.message);
+  }
+);
 
 // Start server with health check
 app.get('/', (req, res) => res.send('Vidalyzer Backend Running'));
-app.get('/ping', (req, res) => res.send('OK')); // Health check endpoint
-app.listen(port, () => console.log(`Server running on port ${port} at ${getIstTime()}`));
+app.get('/ping', (req, res) => res.send('OK'));
+try {
+  app.listen(port, () => {
+    console.log(`Server running on port ${port} at ${getIstTime()}`);
+  });
+} catch (error) {
+  console.error('Failed to start server:', error.message);
+  process.exit(1);
+}
 
 // Keep server alive (ping every 5 minutes)
-const RAILWAY_URL = process.env.RAILWAY_URL || 'https://railway.com/project/0cf72e37-c877-4748-912c-3d5957c2b9b4?environmentId=d94acf4a-985d-406b-9e72-3696f6bcca79';
 setInterval(() => {
   console.log(`Pinging self at ${getIstTime()} to keep instance alive`);
   axios
