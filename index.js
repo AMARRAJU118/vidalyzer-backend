@@ -302,14 +302,14 @@ async function checkAdStatus(userId) {
   const doc = await userRef.get();
   if (!doc.exists) {
     await userRef.set(
-      { adsWatched: 0, lastAdTime: null, coins: 0, recentRewards: [], oneSignalId: '', adCooldownEndTime: null, firstLogin: true },
+      { adsWatched: 0, lastAdTime: null, coins: 0, recentRewards: [], oneSignalId: '', adCooldownEndTime: null, firstLogin: true, adNotificationCount: 0 },
       { merge: true }
     );
     console.log(`Initialized user document for ${userId}`);
-    return { adsWatched: 0, lastAdTime: null, coins: 0, recentRewards: [], oneSignalId: '', adCooldownEndTime: null, firstLogin: true };
+    return { adsWatched: 0, lastAdTime: null, coins: 0, recentRewards: [], oneSignalId: '', adCooldownEndTime: null, firstLogin: true, adNotificationCount: 0 };
   }
   const data = doc.data();
-  console.log(`User data retrieved:`, { userId, adsWatched: data.adsWatched, oneSignalId: data.oneSignalId });
+  console.log(`User data retrieved:`, { userId, adsWatched: data.adsWatched, oneSignalId: data.oneSignalId, adNotificationCount: data.adNotificationCount });
   return data;
 }
 
@@ -341,13 +341,21 @@ async function awardCoins(userId) {
 // Schedule notifications for IST
 const getIstTime = () => new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' });
 
-// Hourly notification cron job
-cron.schedule('0 * * * *', async () => {
-  console.log('Hourly notification triggered at', getIstTime());
-  const motivationalMessage = await generateNotificationMessage('motivational');
-  const success = await sendNotification(motivationalMessage, 'Active Users');
-  console.log(`Hourly notification ${success ? 'sent' : 'failed'} at ${getIstTime()}: ${motivationalMessage}`);
-}, { scheduled: true, timezone: 'Asia/Kolkata' });
+// Enhanced notification scheduling
+async function scheduleNotifications() {
+  // Random interval between 1-2 hours (in minutes)
+  const intervalMinutes = Math.floor(Math.random() * (120 - 60 + 1)) + 60;
+  const notificationTypes = ['motivational', 'subscription', 'coin_purchase'];
+  const randomType = notificationTypes[Math.floor(Math.random() * notificationTypes.length)];
+
+  console.log(`Scheduling ${randomType} notification in ${intervalMinutes} minutes at ${getIstTime()}`);
+  cron.schedule(`0 */${intervalMinutes} * * * *`, async () => {
+    console.log(`${randomType} notification triggered at ${getIstTime()}`);
+    const message = await generateNotificationMessage(randomType);
+    const success = await sendNotification(message, 'Active Users');
+    console.log(`${randomType} notification ${success ? 'sent' : 'failed'} at ${getIstTime()}: ${message}`);
+  }, { scheduled: true, timezone: 'Asia/Kolkata' });
+}
 
 // API endpoints
 app.post('/watch-ad', async (req, res) => {
@@ -582,23 +590,38 @@ db.collection('users').onSnapshot(
             console.log(`Scheduling cooldown notification for ${userId} in ${timeUntilCooldownEnds / 1000} seconds`);
             setTimeout(async () => {
               const userDoc = await db.collection('users').doc(userId).get();
-              if (userDoc.exists && userDoc.data().adCooldownEndTime <= Date.now()) {
+              if (userDoc.exists && userDoc.data().adCooldownEndTime <= Date.now() && userData.adsWatched >= ADS_TO_WATCH) {
                 const message = await generateNotificationMessage('cooldown');
                 const success = await sendNotification(message, null, oneSignalId);
                 console.log(`Cooldown notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}`);
                 await db.collection('users').doc(userId).update({ adCooldownEndTime: null });
               } else {
-                console.log(`Cooldown notification skipped for ${userId}: exists=${userDoc.exists}, currentTime=${Date.now()}, cooldownEndTime=${userDoc.data()?.adCooldownEndTime}`);
+                console.log(`Cooldown notification skipped for ${userId}: exists=${userDoc.exists}, currentTime=${Date.now()}, cooldownEndTime=${userDoc.data()?.adCooldownEndTime}, adsWatched=${userData.adsWatched}`);
               }
             }, timeUntilCooldownEnds);
-          } else if (timeUntilCooldownEnds <= 0) {
+          } else if (timeUntilCooldownEnds <= 0 && userData.adsWatched >= ADS_TO_WATCH) {
             console.log(`Cooldown already expired for ${userId}, sending immediate notification`);
             const message = await generateNotificationMessage('cooldown');
             const success = await sendNotification(message, null, oneSignalId);
             console.log(`Immediate cooldown notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}, message: ${message}`);
             await db.collection('users').doc(userId).update({ adCooldownEndTime: null });
           } else {
-            console.log(`No cooldown notification scheduled for ${userId}: timeUntilCooldownEnds=${timeUntilCooldownEnds}`);
+            console.log(`No cooldown notification scheduled for ${userId}: timeUntilCooldownEnds=${timeUntilCooldownEnds}, adsWatched=${userData.adsWatched}`);
+          }
+        }
+
+        // Schedule ad notifications if count < 3
+        if ((change.type === 'added' || change.type === 'modified') && userData.adNotificationCount < 3 && oneSignalId && isValidOneSignalId(oneSignalId)) {
+          const adNotificationInterval = Math.floor(Math.random() * (120 - 60 + 1)) + 60; // 1-2 hours in minutes
+          if (userData.adNotificationCount === 0) {
+            setTimeout(async () => {
+              const message = await generateNotificationMessage('ad');
+              const success = await sendNotification(message, null, oneSignalId);
+              if (success) {
+                await db.collection('users').doc(userId).update({ adNotificationCount: userData.adNotificationCount + 1 });
+                console.log(`Ad notification ${success ? 'sent' : 'failed'} to ${userId}, count: ${userData.adNotificationCount + 1}`);
+              }
+            }, adNotificationInterval * 60 * 1000);
           }
         }
       } catch (error) {
@@ -616,6 +639,7 @@ app.get('/ping', (req, res) => res.send('OK'));
 try {
   app.listen(port, () => {
     console.log(`Server running on port ${port} at ${getIstTime()}`);
+    scheduleNotifications(); // Start notification scheduling
   });
 } catch (error) {
   console.error('Failed to start server:', error.message);
@@ -645,20 +669,16 @@ const ONESIGNAL_API_KEY = process.env.ONESIGNAL_API_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const RAILWAY_URL = process.env.RAILWAY_URL || 'https://vidalyzer-backend-production.up.railway.app';
 
-if (!ONESIGNAL_APP_ID) {
-  console.error('ONESIGNAL_APP_ID is required but not set. Exiting.');
-  process.exit(1);
-}
-if (!ONESIGNAL_API_KEY) {
-  console.error('ONESIGNAL_API_KEY is required but not set. Exiting.');
-  process.exit(1);
-}
-if (!OPENAI_API_KEY) {
-  console.error('OPENAI_API_KEY is required but not set. Exiting.');
-  process.exit(1);
-}
-if (!process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_CLIENT_EMAIL || !process.env.FIREBASE_PRIVATE_KEY) {
-  console.error('Firebase credentials incomplete. Exiting.');
+// Enhanced environment variable validation
+if (!ONESIGNAL_APP_ID || !ONESIGNAL_API_KEY || !OPENAI_API_KEY || !process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_CLIENT_EMAIL || !process.env.FIREBASE_PRIVATE_KEY) {
+  console.error('Missing required environment variables:', {
+    ONESIGNAL_APP_ID: !!ONESIGNAL_APP_ID,
+    ONESIGNAL_API_KEY: !!ONESIGNAL_API_KEY,
+    OPENAI_API_KEY: !!OPENAI_API_KEY,
+    FIREBASE_PROJECT_ID: !!process.env.FIREBASE_PROJECT_ID,
+    FIREBASE_CLIENT_EMAIL: !!process.env.FIREBASE_CLIENT_EMAIL,
+    FIREBASE_PRIVATE_KEY: !!process.env.FIREBASE_PRIVATE_KEY,
+  });
   process.exit(1);
 }
 
