@@ -24,12 +24,19 @@ try {
 }
 const db = getFirestore();
 
+// Set timezone for consistency
+process.env.TZ = 'Asia/Kolkata';
+
 // Environment variables with validation
-const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID || 'd2288872-b12c-4974-af8c-e98665ea2564';
+const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID;
 const ONESIGNAL_API_KEY = process.env.ONESIGNAL_API_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const RAILWAY_URL = process.env.RAILWAY_URL || 'https://vidalyzer-backend-production.up.railway.app';
 
+if (!ONESIGNAL_APP_ID) {
+  console.error('ONESIGNAL_APP_ID is required but not set. Exiting.');
+  process.exit(1);
+}
 if (!ONESIGNAL_API_KEY) {
   console.error('ONESIGNAL_API_KEY is required but not set. Exiting.');
   process.exit(1);
@@ -47,7 +54,7 @@ if (!process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_CLIENT_EMAIL || !p
 const ADS_TO_WATCH = 10;
 const COOLDOWN_MINUTES = 15;
 
-// Track processed snapshots
+// Track processed snapshots to avoid duplicates
 const processedSnapshots = new Map();
 
 // Validate oneSignalId format (UUID-like)
@@ -58,7 +65,7 @@ function isValidOneSignalId(id) {
 
 // Log server startup and timezone
 console.log('Server starting at', new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-console.log('Timezone:', process.env.TZ || 'Not set');
+console.log('Timezone:', process.env.TZ);
 
 // Generate notification message with varied tones
 async function generateNotificationMessage(type = 'ad', userId = null) {
@@ -84,6 +91,9 @@ async function generateNotificationMessage(type = 'ad', userId = null) {
       case 'coin_purchase':
         prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user celebrating coin purchases. Examples: Friend: "Nice! Coins for your growth! 🙌", Girlfriend: "Sweetie, those coins are 🔥! Love it!", Boyfriend: "Coins grabbed, dude! Let's grow! 💪"`;
         break;
+      case 'test':
+        prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user for testing purposes. Examples: Friend: "Test ping! Keep growing! 😎", Girlfriend: "Hey cutie, test vibe! 🥰", Boyfriend: "Test alert, king! 🚀"`;
+        break;
       default:
         prompt = `Generate a ${randomTone}-style push notification (max 50 chars) for an Indian Vidalyzer user to motivate app use. Examples: Friend: "Let's grow your channel today! 😎", Girlfriend: "Hey cutie, boost your reels now! 🥰", Boyfriend: "Get on Vidalyzer, king! Skyrocket! 🚀"`;
     }
@@ -107,58 +117,81 @@ async function generateNotificationMessage(type = 'ad', userId = null) {
   } catch (error) {
     console.error(`Error generating notification for type ${type}:`, error.response ? error.response.data : error.message);
     const fallbacks = {
-      ad: ['Yo, watch ads & boost your Insta!', 'Babe, ads = coins for your reels! 😘', 'Hey, watch ads to grow big! 💪'],
-      cooldown: ['Cooldown done! Watch ads now! 😎', 'Sweetie, ads are back! Go for it! 💖', 'Cooldown over, champ! Ads time! 🏆'],
-      motivational: ['Uploaded a vid today? Use Vidalyzer! 🚀', 'Hey love, post a reel & boost SEO! 😍', 'Man, use Vidalyzer for epic YouTube growth! 🔥'],
-      subscription: ['Yo, you’re premium now! Rock it! 🎉', 'OMG babe, premium vibes! So proud! 😘', 'Premium status, bro! You’re a star! 🌟'],
-      coin_purchase: ['Nice! Coins for your growth! 🙌', 'Sweetie, those coins are 🔥! Love it!', 'Coins grabbed, dude! Let’s grow! 💪'],
+      ad: ['Watch ads to boost your channel! 🚀', 'Hey, ads = coins for growth! 😎', 'Grow big with ad coins! 💪'],
+      cooldown: ['Ads are back! Watch now! 🎉', 'Cooldown done, go for ads! 😍', 'Time to watch ads again! 🏆'],
+      motivational: ['Post a reel & grow! 🌟', 'Use Vidalyzer daily! 🚀', 'Boost your SEO now! 🔥'],
+      subscription: ['You’re premium! Shine on! 🎉', 'Premium unlocked! So cool! 😘', 'Welcome to premium! 🌟'],
+      coin_purchase: ['Coins added! Grow fast! 🙌', 'Nice coin grab! Let’s go! 💪', 'Coins for your fame! 🔥'],
+      test: ['Test ping! Keep growing! 😎', 'Test vibe, stay awesome! 🥰', 'Test alert, let’s grow! 🚀'],
     };
-    const fallback = fallbacks[type] ? fallbacks[type][Math.floor(Math.random() * fallbacks[type].length)] : 'Hey cutie, boost your reels now! 🥰';
+    const fallback = fallbacks[type] ? fallbacks[type][Math.floor(Math.random() * fallbacks[type].length)] : 'Boost your channel now! 🚀';
     console.log(`Using fallback message for ${type}: ${fallback}`);
     return fallback;
   }
 }
 
-// Send push notification via OneSignal
-async function sendNotification(message, target = 'All', oneSignalId = null) {
-  try {
-    if (!ONESIGNAL_API_KEY) throw new Error('ONESIGNAL_API_KEY is not set');
-    if (oneSignalId && !isValidOneSignalId(oneSignalId)) {
-      console.warn(`Invalid oneSignalId format: ${oneSignalId}`);
-      return false;
-    }
-    console.log('Attempting to send notification:', { message, target, oneSignalId });
-    const notificationData = {
-      app_id: ONESIGNAL_APP_ID,
-      contents: { en: message },
-      headings: { en: 'Vidalyzer Boost! 🎉' },
-    };
-    if (oneSignalId) {
-      notificationData.include_player_ids = [oneSignalId];
-    } else {
-      notificationData.included_segments = [target];
-    }
-    const response = await axios.post(
-      'https://onesignal.com/api/v1/notifications',
-      notificationData,
-      {
-        headers: {
-          Authorization: `Basic ${ONESIGNAL_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
+// Send push notification via OneSignal with retry mechanism
+async function sendNotification(message, target = 'All', oneSignalId = null, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      if (!ONESIGNAL_API_KEY || !ONESIGNAL_APP_ID) {
+        throw new Error('OneSignal credentials are not set');
       }
-    );
-    console.log(`Notification sent successfully to ${oneSignalId || target}: ${message}`, response.data);
-    return true;
-  } catch (error) {
-    console.error('Error sending notification:', {
-      message,
-      target,
-      oneSignalId,
-      error: error.response ? error.response.data : error.message,
-    });
-    return false;
+      if (oneSignalId && !isValidOneSignalId(oneSignalId)) {
+        console.warn(`Invalid oneSignalId format: ${oneSignalId}`);
+        return false;
+      }
+      console.log('Preparing to send notification:', { message, target, oneSignalId });
+
+      const notificationData = {
+        app_id: ONESIGNAL_APP_ID,
+        contents: { en: message },
+        headings: { en: 'Vidalyzer Boost! 🎉' },
+      };
+      if (oneSignalId) {
+        notificationData.include_player_ids = [oneSignalId];
+      } else {
+        notificationData.included_segments = [target];
+      }
+
+      const response = await axios.post(
+        'https://onesignal.com/api/v1/notifications',
+        notificationData,
+        {
+          headers: {
+            Authorization: `Basic ${ONESIGNAL_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      if (response.data.id) {
+        console.log(`Notification sent successfully to ${oneSignalId || target}: ${message}`, {
+          notificationId: response.data.id,
+          recipients: response.data.recipients,
+        });
+        return true;
+      } else {
+        console.error('Notification sent but no ID returned:', response.data);
+        return false;
+      }
+    } catch (error) {
+      console.error('Error sending notification (attempt ' + (i + 1) + '):', {
+        message,
+        target,
+        oneSignalId,
+        error: error.response ? error.response.data : error.message,
+        status: error.response ? error.response.status : null,
+      });
+      if (i < retries - 1 && error.response?.status === 429) {
+        console.log(`Rate limited, retrying in ${i + 1}s...`);
+        await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+      } else {
+        return false;
+      }
+    }
   }
+  return false;
 }
 
 // Check and update ad watch status
@@ -172,11 +205,11 @@ async function checkAdStatus(userId) {
   const doc = await userRef.get();
   if (!doc.exists) {
     await userRef.set(
-      { adsWatched: 0, lastAdTime: null, coins: 0, recentRewards: [], oneSignalId: '' },
+      { adsWatched: 0, lastAdTime: null, coins: 0, recentRewards: [], oneSignalId: '', adCooldownEndTime: null },
       { merge: true }
     );
     console.log(`Initialized user document for ${userId}`);
-    return { adsWatched: 0, lastAdTime: null, coins: 0, recentRewards: [], oneSignalId: '' };
+    return { adsWatched: 0, lastAdTime: null, coins: 0, recentRewards: [], oneSignalId: '', adCooldownEndTime: null };
   }
   const data = doc.data();
   console.log(`User data retrieved:`, { userId, adsWatched: data.adsWatched, oneSignalId: data.oneSignalId });
@@ -214,8 +247,9 @@ const getIstTime = () => new Date().toLocaleString('en-US', { timeZone: 'Asia/Ko
 // Test cron to verify OneSignal (every 5 minutes)
 cron.schedule('*/5 * * * *', async () => {
   console.log('Test cron triggered at', getIstTime());
-  const success = await sendNotification('Test notification from Vidalyzer!', 'Active Users');
-  console.log(`Test notification ${success ? 'sent' : 'failed'} at ${getIstTime()}`);
+  const testMessage = await generateNotificationMessage('test');
+  const success = await sendNotification(testMessage, 'Active Users');
+  console.log(`Test notification ${success ? 'sent' : 'failed'} at ${getIstTime()}: ${testMessage}`);
 }, { scheduled: true, timezone: 'Asia/Kolkata' });
 
 // Schedule ad notifications: 10 AM, 2 PM, 6 PM IST
@@ -342,6 +376,10 @@ app.post('/update-onesignal', async (req, res) => {
   try {
     await db.collection('users').doc(userId).set({ oneSignalId }, { merge: true });
     console.log(`update-onesignal: Updated oneSignalId for user ${userId}: ${oneSignalId}`);
+    // Send test notification to verify
+    const testMessage = await generateNotificationMessage('test', userId);
+    const success = await sendNotification(testMessage, null, oneSignalId);
+    console.log(`Test notification after update ${success ? 'sent' : 'failed'} to ${userId}`);
     res.send({ message: 'OneSignal ID updated successfully' });
   } catch (error) {
     console.error(`update-onesignal: Error updating oneSignalId for user ${userId}:`, error.message);
@@ -349,10 +387,44 @@ app.post('/update-onesignal', async (req, res) => {
   }
 });
 
+// API endpoint to test notifications
+app.post('/test-notification', async (req, res) => {
+  const { userId, type = 'ad' } = req.body;
+  if (!userId) {
+    console.error('test-notification: Missing userId');
+    return res.status(400).send('User ID required');
+  }
+  try {
+    const userDoc = await db.collection('users').doc(userId).get();
+    if (!userDoc.exists || !userDoc.data().oneSignalId) {
+      console.error(`test-notification: User not found or no oneSignalId for ${userId}`);
+      return res.status(404).send('User not found or no oneSignalId');
+    }
+    const oneSignalId = userDoc.data().oneSignalId;
+    if (!isValidOneSignalId(oneSignalId)) {
+      console.warn(`test-notification: Invalid oneSignalId format for ${userId}: ${oneSignalId}`);
+      return res.status(400).send('Invalid oneSignalId format');
+    }
+    const message = await generateNotificationMessage(type, userId);
+    const success = await sendNotification(message, null, oneSignalId);
+    res.send({
+      message: success ? 'Notification sent successfully' : 'Failed to send notification',
+      details: { userId, oneSignalId, message, type },
+    });
+  } catch (error) {
+    console.error('test-notification: Error:', error.message);
+    res.status(500).send('Error sending test notification');
+  }
+});
+
 // Firestore listener for new subscriptions
 db.collection('Premium').onSnapshot(
   (snapshot) => {
     console.log('Premium snapshot triggered at', getIstTime(), 'changes:', snapshot.docChanges().length);
+    if (snapshot.docChanges().length === 0) {
+      console.log('No changes in Premium snapshot');
+      return;
+    }
     snapshot.docChanges().forEach(async (change) => {
       try {
         const data = change.doc.data();
@@ -408,6 +480,10 @@ db.collection('Premium').onSnapshot(
 db.collection('users').onSnapshot(
   (snapshot) => {
     console.log('Users snapshot triggered at', getIstTime(), 'changes:', snapshot.docChanges().length);
+    if (snapshot.docChanges().length === 0) {
+      console.log('No changes in users snapshot');
+      return;
+    }
     snapshot.docChanges().forEach(async (change) => {
       try {
         const userId = change.doc.id;
@@ -436,15 +512,25 @@ db.collection('users').onSnapshot(
           if (timeUntilCooldownEnds > 0 && timeUntilCooldownEnds < 24 * 60 * 60 * 1000) {
             console.log(`Scheduling cooldown notification for ${userId} in ${timeUntilCooldownEnds / 1000} seconds`);
             setTimeout(async () => {
-              const userDoc = await db.collection('users').doc(userId).get();
-              if (userDoc.exists && userDoc.data().adCooldownEndTime <= Date.now()) {
-                const message = await generateNotificationMessage('cooldown');
-                const success = await sendNotification(message, null, oneSignalId);
-                console.log(`Cooldown notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}`);
-              } else {
-                console.log(`Cooldown notification skipped for ${userId}: userDoc exists=${userDoc.exists}, cooldownEndTime=${userDoc.data()?.adCooldownEndTime}`);
+              try {
+                const userDoc = await db.collection('users').doc(userId).get();
+                if (userDoc.exists && userDoc.data().adCooldownEndTime <= Date.now()) {
+                  const message = await generateNotificationMessage('cooldown');
+                  const success = await sendNotification(message, null, oneSignalId);
+                  console.log(`Cooldown notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}`);
+                  // Clear adCooldownEndTime after notification
+                  await db.collection('users').doc(userId).update({
+                    adCooldownEndTime: null,
+                  });
+                } else {
+                  console.log(`Cooldown notification skipped for ${userId}: userDoc exists=${userDoc.exists}, cooldownEndTime=${userDoc.data()?.adCooldownEndTime}`);
+                }
+              } catch (error) {
+                console.error(`Error sending cooldown notification for ${userId}:`, error.message);
               }
             }, timeUntilCooldownEnds);
+          } else {
+            console.log(`No cooldown notification scheduled for ${userId}: timeUntilCooldownEnds=${timeUntilCooldownEnds}`);
           }
         }
       } catch (error) {
