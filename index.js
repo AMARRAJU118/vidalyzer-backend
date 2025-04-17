@@ -29,8 +29,68 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason.message, reason.stack);
 });
 
-async function generateNotificationMessage(type = 'ad', userId = null) {
-  console.log(`Generating notification for type: ${type}, userId: ${userId || 'none'}`);
+// Helper to get IST time
+const getIstTime = () => new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' });
+
+// Check if notification can be sent based on type and limits
+async function canSendNotification(userId, type) {
+  try {
+    const userRef = db.collection('users').doc(userId);
+    const userDoc = await userRef.get();
+    if (!userDoc.exists) return false;
+
+    const userData = userDoc.data();
+    const today = new Date().toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+
+    if (type === 'ad') {
+      const adCount = userData.adNotificationCount || 0;
+      const lastAdDate = userData.lastAdNotificationDate || '';
+      if (lastAdDate !== today) {
+        await userRef.update({ adNotificationCount: 0, lastAdNotificationDate: today });
+        return true;
+      }
+      return adCount < 3;
+    } else if (type === 'welcome') {
+      return !userData.welcomeSent;
+    } else {
+      // For motivational, subscription, coin_purchase, cooldown
+      const lastSent = userData[`last${type.charAt(0).toUpperCase() + type.slice(1)}Sent`] || 0;
+      const now = Date.now();
+      const oneHour = 60 * 60 * 1000;
+      return now - lastSent >= oneHour;
+    }
+  } catch (error) {
+    console.error(`Error checking notification limits for user ${userId}, type ${type}:`, error.message);
+    return false;
+  }
+}
+
+// Update notification tracking
+async function updateNotificationTracking(userId, type) {
+  try {
+    const userRef = db.collection('users').doc(userId);
+    if (type === 'ad') {
+      const today = new Date().toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata' });
+      await userRef.update({
+        adNotificationCount: db.FieldValue.increment(1),
+        lastAdNotificationDate: today,
+      });
+    } else if (type === 'welcome') {
+      await userRef.update({ welcomeSent: true });
+    } else {
+      await userRef.update({
+        [`last${type.charAt(0).toUpperCase() + type.slice(1)}Sent`]: Date.now(),
+      });
+    }
+    console.log(`Updated notification tracking for user ${userId}, type ${type}`);
+  } catch (error) {
+    console.error(`Error updating notification tracking for user ${userId}, type ${type}:`, error.message);
+  }
+}
+
+// Generate notification messages
+async function generateNotificationMessage(type = 'ad', userId = null, coins = 0) {
+  console.log(`Generating notification for type: ${type}, userId: ${userId || 'none'}, coins: ${coins}`);
   try {
     let prompt;
     const tones = ['exciting', 'motivational', 'urgent', 'reward-focused'];
@@ -44,23 +104,21 @@ The app includes a feature called "Watch Ads & Get Coins", where users can:
 - Watch up to 10 ads daily
 - Earn coins for each ad watched
 - Wait 15 minutes between each ad watch
-- Use coins to unlock premium features
+- Use coins to buy Instagram followers, likes, YouTube subscribers, likes, or unlock premium features
 
 🎯 Objective:
-Create short, attention-grabbing push notifications (max 10–15 words) to:
-- Encourage users to watch more ads
-- Promote the benefits of earning coins
-- Boost daily engagement and retention
+Create short, reminder-style push notifications (max 10–15 words) to:
+- Remind users to watch ads (limited to 3 notifications per day)
+- Emphasize earning coins
+- Boost daily engagement
 
 ✨ Tone:
 - ${randomTone}
 
 💬 Sample Notification Themes:
-- “Your cooldown’s over! Earn more coins now 🎉”
-- “💰 Ready for more coins? Watch the next ad!”
-- “New day, new rewards. Watch 10 ads & win big! 🚀”
-- “15 min’s up! Time to earn your next coin 💸”
-- “Max out your rewards today—10 ads = major coin haul!”`;
+- “Forgot to watch ads today? Earn coins now! 🎉”
+- “Don’t miss out! Watch ads for coins! 💰”
+- “Hey, watch ads to grow your channels! 🚀”`;
         break;
       case 'cooldown':
         prompt = `You are an assistant helping write engaging push notifications for the Vidalyzer app, an AI-powered SEO Toolkit for YouTube & Instagram.
@@ -69,48 +127,47 @@ The app includes a feature called "Watch Ads & Get Coins", where users can:
 - Watch up to 10 ads daily
 - Earn coins for each ad watched
 - Wait 15 minutes between each ad watch
-- Use coins to unlock premium features
+- Use coins to buy Instagram followers, likes, YouTube subscribers, likes, or unlock premium features
 
 🎯 Objective:
 Create short, attention-grabbing push notifications (max 10–15 words) to:
-- Remind users when their cooldown timer ends
-- Encourage users to watch more ads
-- Boost daily engagement and retention
+- Notify users when their 15-minute cooldown ends
+- Encourage watching more ads
+- Boost engagement
+- Sent only once per hour
 
 ✨ Tone:
 - ${randomTone}
 
 💬 Sample Notification Themes:
-- “Your cooldown’s over! Earn more coins now 🎉”
-- “15 min’s up! Time to earn your next coin 💸”
-- “Cooldown done! Grab your next reward fast! 🚀”
-- “Time’s up! Watch ads and boost your coins! 💰”
-- “Act now—cooldown’s over, earn big today! 🎯”`;
+- “Cooldown’s done! Watch ads for coins! 🎉”
+- “15 min up! Earn more coins now! 💰”
+- “Ready? Your next ad awaits! 🚀”`;
         break;
       case 'motivational':
         prompt = `You are an assistant helping write engaging push notifications for the Vidalyzer app, an AI-powered SEO Toolkit for YouTube & Instagram.
 
-The app includes a feature called "Watch Ads & Get Coins", where users can:
+The app helps users grow their channels and includes a feature called "Watch Ads & Get Coins", where users can:
 - Watch up to 10 ads daily
 - Earn coins for each ad watched
 - Wait 15 minutes between each ad watch
-- Use coins to unlock premium features
+- Use coins to buy Instagram followers, likes, YouTube subscribers, likes, or unlock premium features
 
 🎯 Objective:
-Create short, attention-grabbing push notifications (max 10–15 words) to:
-- Encourage users to watch more ads
-- Promote the benefits of earning coins
-- Boost daily engagement and retention
+Create short, motivational push notifications (max 10–15 words) to:
+- Encourage users to create/upload content for YouTube/Instagram
+- Promote Vidalyzer’s growth tools
+- Boost daily engagement
+- Sent only once per hour
 
 ✨ Tone:
 - ${randomTone}
 
 💬 Sample Notification Themes:
-- “New day, new rewards. Watch 10 ads & win big! 🚀”
-- “Max out your rewards today—10 ads = major coin haul!”
-- “💰 Boost your growth! Watch ads daily now!”
-- “Unlock power—earn coins with every ad watch! 🎉”
-- “Seize the day! 10 ads = epic rewards! 💸”`;
+- “Uploaded your YouTube video today? Boost it with Vidalyzer! 🚀”
+- “New Insta post? Grow it with Vidalyzer! 📸”
+- “Create content today? Skyrocket it with us! 🎉”
+- “Ready to shine? Post & grow with Vidalyzer! 💪”`;
         break;
       case 'subscription':
         prompt = `You are an assistant helping write engaging push notifications for the Vidalyzer app, an AI-powered SEO Toolkit for YouTube & Instagram.
@@ -119,22 +176,22 @@ The app includes a feature called "Watch Ads & Get Coins", where users can:
 - Watch up to 10 ads daily
 - Earn coins for each ad watched
 - Wait 15 minutes between each ad watch
-- Use coins to unlock premium features
+- Use coins to buy Instagram followers, likes, YouTube subscribers, likes, or unlock premium features
 
 🎯 Objective:
 Create short, attention-grabbing push notifications (max 10–15 words) to:
-- Promote the benefits of earning coins
-- Boost daily engagement and retention
+- Celebrate new premium subscriptions
+- Encourage engagement with premium features
+- Boost retention
+- Sent only once per hour
 
 ✨ Tone:
 - ${randomTone}
 
 💬 Sample Notification Themes:
-- “Premium unlocked! Earn more coins now! 🎉”
-- “💰 Premium power—watch ads, win big today! 🚀”
-- “Unlock premium perks with your coin haul! 💸”
-- “Go premium—max rewards await your ads! 🎯”
-- “Premium boost! Earn coins faster now! 💪”`;
+- “Premium unlocked! Grow faster with Vidalyzer! 🎉”
+- “Welcome to premium! Skyrocket your channels! 🚀”
+- “Premium power activated! Boost your growth! 💰”`;
         break;
       case 'coin_purchase':
         prompt = `You are an assistant helping write engaging push notifications for the Vidalyzer app, an AI-powered SEO Toolkit for YouTube & Instagram.
@@ -143,22 +200,22 @@ The app includes a feature called "Watch Ads & Get Coins", where users can:
 - Watch up to 10 ads daily
 - Earn coins for each ad watched
 - Wait 15 minutes between each ad watch
-- Use coins to unlock premium features
+- Use coins to buy Instagram followers, likes, YouTube subscribers, likes, or unlock premium features
 
 🎯 Objective:
-Create short, attention-grabbing push notifications (max 10–15 words) to:
-- Promote the benefits of earning coins
-- Boost daily engagement and retention
+Create short, congratulatory push notifications (max 10–15 words) to:
+- Celebrate when coins are added to the user’s account
+- Mention the number of coins earned (e.g., ${coins} coins)
+- Encourage using coins for growth
+- Sent only once per hour
 
 ✨ Tone:
 - ${randomTone}
 
 💬 Sample Notification Themes:
-- “Coins earned! Unlock premium now! 🎉”
-- “💰 New coins ready—boost your growth! 🚀”
-- “Coin haul secured! Level up today! 💸”
-- “Earned coins! Grab premium features fast! 🎯”
-- “💪 Coins in hand—win big now! 💰”`;
+- “Hey, you got ${coins} coins! Congrats! 🎉”
+- “${coins} coins added! Boost your growth! 💰”
+- “Woohoo! ${coins} coins earned! Grow now! 🚀”`;
         break;
       case 'welcome':
         prompt = `You are an assistant helping write engaging push notifications for the Vidalyzer app, an AI-powered SEO Toolkit for YouTube & Instagram.
@@ -167,22 +224,21 @@ The app includes a feature called "Watch Ads & Get Coins", where users can:
 - Watch up to 10 ads daily
 - Earn coins for each ad watched
 - Wait 15 minutes between each ad watch
-- Use coins to unlock premium features
+- Use coins to buy Instagram followers, likes, YouTube subscribers, likes, or unlock premium features
 
 🎯 Objective:
-Create short, attention-grabbing push notifications (max 10–15 words) to:
-- Welcome new users
+Create short, welcoming push notifications (max 10–15 words) to:
+- Welcome new users on their first login
 - Encourage initial engagement
+- Sent only once ever per user
 
 ✨ Tone:
 - ${randomTone}
 
 💬 Sample Notification Themes:
 - “Welcome to Vidalyzer! Grow your channels now! 🎉”
-- “💰 Start earning coins—watch ads today! 🚀”
-- “New user? Boost growth with Vidalyzer! 💸”
-- “Join the journey—unlock power now! 🎯”
-- “Hello! Skyrocket your growth with us! 💪”`;
+- “Hey, start boosting your Instagram & YouTube! 🚀”
+- “New user? Skyrocket your growth with us! 💪”`;
         break;
       default:
         prompt = `You are an assistant helping write engaging push notifications for the Vidalyzer app, an AI-powered SEO Toolkit for YouTube & Instagram.
@@ -191,23 +247,21 @@ The app includes a feature called "Watch Ads & Get Coins", where users can:
 - Watch up to 10 ads daily
 - Earn coins for each ad watched
 - Wait 15 minutes between each ad watch
-- Use coins to unlock premium features
+- Use coins to buy Instagram followers, likes, YouTube subscribers, likes, or unlock premium features
 
 🎯 Objective:
-Create short, attention-grabbing push notifications (max 10–15 words) to:
-- Encourage users to watch more ads
-- Promote the benefits of earning coins
-- Boost daily engagement and retention
+Create short, reminder-style push notifications (max 10–15 words) to:
+- Remind users to watch ads (limited to 3 notifications per day)
+- Emphasize earning coins
+- Boost daily engagement
 
 ✨ Tone:
 - ${randomTone}
 
 💬 Sample Notification Themes:
-- “Your cooldown’s over! Earn more coins now 🎉”
-- “💰 Ready for more coins? Watch the next ad!”
-- “New day, new rewards. Watch 10 ads & win big! 🚀”
-- “15 min’s up! Time to earn your next coin 💸”
-- “Max out your rewards today—10 ads = major coin haul!”`;
+- “Forgot to watch ads today? Earn coins now! 🎉”
+- “Don’t miss out! Watch ads for coins! 💰”
+- “Hey, watch ads to grow your channels! 🚀”`;
     }
 
     const response = await axios.post(
@@ -224,7 +278,10 @@ Create short, attention-grabbing push notifications (max 10–15 words) to:
         },
       }
     );
-    const message = response.data.choices[0].message.content.trim();
+    let message = response.data.choices[0].message.content.trim();
+    if (type === 'coin_purchase') {
+      message = message.replace('${coins}', coins); // Ensure coins value is inserted
+    }
     console.log(`Generated message for ${type}: ${message}`);
     return message.length <= 50 ? message : message.substring(0, 50).trim() + '…';
   } catch (error) {
@@ -232,9 +289,9 @@ Create short, attention-grabbing push notifications (max 10–15 words) to:
     const fallbacks = {
       ad: 'Watch ads to boost your channels! 📈',
       cooldown: 'Ad cooldown over! Grow now! ⏰',
-      motivational: 'Maximize growth with Vidalyzer! 🚀',
+      motivational: 'Post today? Grow with Vidalyzer! 🚀',
       subscription: 'Premium activated! Excel now! 🎉',
-      coin_purchase: 'Coins added! Elevate your growth! 💰',
+      coin_purchase: `Got ${coins} coins! Grow your channels! 💰`,
       welcome: 'Welcome to Vidalyzer! Grow now! 🎉',
     };
     const fallback = fallbacks[type] || 'Boost your channels now! 🚀';
@@ -243,8 +300,8 @@ Create short, attention-grabbing push notifications (max 10–15 words) to:
   }
 }
 
-// Send push notification via OneSignal with retry mechanism and fallback
-async function sendNotification(message, target = 'All', oneSignalId = null, type = 'ad', userId = null, retries = 3) {
+// Send push notification via OneSignal with retry mechanism
+async function sendNotification(message, target = 'All', oneSignalId = null, type = 'ad', userId = null, coins = 0, retries = 3) {
   for (let i = 0; i < retries; i++) {
     try {
       if (!ONESIGNAL_API_KEY || !ONESIGNAL_APP_ID) {
@@ -254,7 +311,7 @@ async function sendNotification(message, target = 'All', oneSignalId = null, typ
         console.warn(`Invalid oneSignalId format: ${oneSignalId}`);
         return false;
       }
-      console.log('Preparing to send notification:', { message, target, oneSignalId, type, userId });
+      console.log('Preparing to send notification:', { message, target, oneSignalId, type, userId, coins });
 
       const notificationData = {
         app_id: ONESIGNAL_APP_ID,
@@ -284,24 +341,12 @@ async function sendNotification(message, target = 'All', oneSignalId = null, typ
           recipients: response.data.recipients,
         });
         await saveNotificationToFirestore(message, type, userId, true);
+        if (userId) {
+          await updateNotificationTracking(userId, type);
+        }
         return true;
       } else {
         console.error('Notification sent but no ID returned:', response.data);
-        // Fallback: Send to individual subscribed users from Firestore
-        if (!oneSignalId && target === 'Active Users') {
-          const usersSnapshot = await db.collection('users').where('oneSignalId', '!=', '').get();
-          const validOneSignalIds = usersSnapshot.docs
-            .map(doc => doc.data().oneSignalId)
-            .filter(id => isValidOneSignalId(id));
-          console.log(`Found ${validOneSignalIds.length} valid oneSignalIds for fallback:`, validOneSignalIds);
-          if (validOneSignalIds.length > 0) {
-            for (const id of validOneSignalIds) {
-              await sendNotification(message, null, id, type, userId, retries);
-            }
-            await saveNotificationToFirestore(message, type, userId, true);
-            return true;
-          }
-        }
         await saveNotificationToFirestore(message, type, userId, false);
         return false;
       }
@@ -358,11 +403,41 @@ async function checkAdStatus(userId) {
   const doc = await userRef.get();
   if (!doc.exists) {
     await userRef.set(
-      { adsWatched: 0, lastAdTime: null, coins: 0, recentRewards: [], oneSignalId: '', adCooldownEndTime: null, firstLogin: true, adNotificationCount: 0 },
+      {
+        adsWatched: 0,
+        lastAdTime: null,
+        coins: 0,
+        recentRewards: [],
+        oneSignalId: '',
+        adCooldownEndTime: null,
+        firstLogin: true,
+        adNotificationCount: 0,
+        lastAdNotificationDate: '',
+        welcomeSent: false,
+        lastMotivationalSent: 0,
+        lastSubscriptionSent: 0,
+        lastCoinPurchaseSent: 0,
+        lastCooldownSent: 0,
+      },
       { merge: true }
     );
     console.log(`Initialized user document for ${userId}`);
-    return { adsWatched: 0, lastAdTime: null, coins: 0, recentRewards: [], oneSignalId: '', adCooldownEndTime: null, firstLogin: true, adNotificationCount: 0 };
+    return {
+      adsWatched: 0,
+      lastAdTime: null,
+      coins: 0,
+      recentRewards: [],
+      oneSignalId: '',
+      adCooldownEndTime: null,
+      firstLogin: true,
+      adNotificationCount: 0,
+      lastAdNotificationDate: '',
+      welcomeSent: false,
+      lastMotivationalSent: 0,
+      lastSubscriptionSent: 0,
+      lastCoinPurchaseSent: 0,
+      lastCooldownSent: 0,
+    };
   }
   const data = doc.data();
   console.log(`User data retrieved:`, { userId, adsWatched: data.adsWatched, oneSignalId: data.oneSignalId, adNotificationCount: data.adNotificationCount });
@@ -389,30 +464,54 @@ async function awardCoins(userId) {
       recentRewards: rewards,
     });
     console.log(`Awarded ${coins} coins to user ${userId}`);
+
+    // Send coin_purchase notification
+    if (userData.oneSignalId && isValidOneSignalId(userData.oneSignalId) && (await canSendNotification(userId, 'coin_purchase'))) {
+      const message = await generateNotificationMessage('coin_purchase', userId, coins);
+      await saveNotificationToFirestore(message, 'coin_purchase', userId, false);
+      const success = await sendNotification(message, null, userData.oneSignalId, 'coin_purchase', userId, coins);
+      console.log(`Coin purchase notification ${success ? 'sent' : 'failed'} to ${userId}, message: ${message}`);
+    }
+
     return { coins, message: `Earned ${coins} coins! Elevate your growth! 🎉` };
   }
   return { coins: 0, message: 'Watch 10 ads to earn coins!' };
 }
 
-// Schedule notifications for IST
-const getIstTime = () => new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' });
-
-// Enhanced notification scheduling
+// Schedule notifications for motivational and subscription
 async function scheduleNotifications() {
-  // Random interval between 1-2 hours (in minutes)
-  const intervalMinutes = Math.floor(Math.random() * (120 - 60 + 1)) + 60;
-  const notificationTypes = ['motivational', 'subscription', 'coin_purchase'];
+  const notificationTypes = ['motivational', 'subscription'];
   const randomType = notificationTypes[Math.floor(Math.random() * notificationTypes.length)];
+  console.log(`Scheduling ${randomType} notification at ${getIstTime()}`);
 
-  console.log(`Scheduling ${randomType} notification in ${intervalMinutes} minutes at ${getIstTime()}`);
-  cron.schedule(`0 */${intervalMinutes} * * * *`, async () => {
+  cron.schedule('0 0 * * * *', async () => {
     console.log(`${randomType} notification triggered at ${getIstTime()}`);
-    const message = await generateNotificationMessage(randomType);
-    await saveNotificationToFirestore(message, randomType, null, false); // Save before sending
-    const success = await sendNotification(message, 'Active Users', null, randomType);
-    console.log(`${randomType} notification ${success ? 'sent' : 'failed'} at ${getIstTime()}: ${message}`);
+    const usersSnapshot = await db.collection('users').where('oneSignalId', '!=', '').get();
+    for (const doc of usersSnapshot.docs) {
+      const userId = doc.id;
+      const userData = doc.data();
+      if (isValidOneSignalId(userData.oneSignalId) && (await canSendNotification(userId, randomType))) {
+        const message = await generateNotificationMessage(randomType, userId);
+        await saveNotificationToFirestore(message, randomType, userId, false);
+        const success = await sendNotification(message, null, userData.oneSignalId, randomType, userId);
+        console.log(`${randomType} notification ${success ? 'sent' : 'failed'} to ${userId}: ${message}`);
+      }
+    }
   }, { scheduled: true, timezone: 'Asia/Kolkata' });
 }
+
+// Reset ad notification counts daily
+cron.schedule('0 0 0 * * *', async () => {
+  console.log('Resetting ad notification counts at', getIstTime());
+  const usersSnapshot = await db.collection('users').get();
+  const batch = db.batch();
+  usersSnapshot.forEach(doc => {
+    const userRef = db.collection('users').doc(doc.id);
+    batch.update(userRef, { adNotificationCount: 0, lastAdNotificationDate: '' });
+  });
+  await batch.commit();
+  console.log('Ad notification counts reset for all users');
+}, { scheduled: true, timezone: 'Asia/Kolkata' });
 
 // API endpoints
 app.post('/watch-ad', async (req, res) => {
@@ -461,11 +560,17 @@ app.post('/buy-feature', async (req, res) => {
   }
   let cost = 0;
   switch (feature) {
-    case 'followers':
+    case 'instagram_followers':
       cost = quantity * 10;
       break;
-    case 'subscribers':
+    case 'instagram_likes':
+      cost = quantity * 5;
+      break;
+    case 'youtube_subscribers':
       cost = quantity * 20;
+      break;
+    case 'youtube_likes':
+      cost = quantity * 8;
       break;
     default:
       console.error(`buy-feature: Invalid feature ${feature} for user ${userId}`);
@@ -505,16 +610,14 @@ app.post('/update-onesignal', async (req, res) => {
     if (oneSignalId && oneSignalId !== currentData.oneSignalId) {
       await userRef.set({ oneSignalId }, { merge: true });
       console.log(`update-onesignal: Updated oneSignalId for user ${userId} to ${oneSignalId}`);
-    } else {
-      console.log(`update-onesignal: No update needed for ${userId}, oneSignalId unchanged or invalid`);
     }
 
-    if (userDoc.exists && userDoc.data().firstLogin === true) {
-      const welcomeMessage = 'Thank you for downloading Vidalyzer! Grow your Instagram and YouTube faster now!';
-      await saveNotificationToFirestore(welcomeMessage, 'welcome', userId, false); // Save before sending
+    if (userDoc.exists && userDoc.data().firstLogin && !(userDoc.data().welcomeSent || false)) {
+      const welcomeMessage = await generateNotificationMessage('welcome', userId);
+      await saveNotificationToFirestore(welcomeMessage, 'welcome', userId, false);
       const success = await sendNotification(welcomeMessage, null, oneSignalId, 'welcome', userId);
       console.log(`Welcome notification ${success ? 'sent' : 'failed'} to ${userId} on first login`);
-      await userRef.update({ firstLogin: false });
+      await userRef.update({ firstLogin: false, welcomeSent: true });
     }
 
     res.send({ message: 'OneSignal ID updated successfully' });
@@ -525,7 +628,7 @@ app.post('/update-onesignal', async (req, res) => {
 });
 
 app.post('/test-notification', async (req, res) => {
-  const { userId, type = 'ad' } = req.body;
+  const { userId, type = 'ad', coins = 0 } = req.body;
   if (!userId) {
     console.error('test-notification: Missing userId');
     return res.status(400).send('User ID required');
@@ -541,12 +644,16 @@ app.post('/test-notification', async (req, res) => {
       console.warn(`test-notification: Invalid oneSignalId format for ${userId}: ${oneSignalId}`);
       return res.status(400).send('Invalid oneSignalId format');
     }
-    const message = await generateNotificationMessage(type, userId);
-    await saveNotificationToFirestore(message, type, userId, false); // Save before sending
-    const success = await sendNotification(message, null, oneSignalId, type, userId);
+    if (!(await canSendNotification(userId, type))) {
+      console.log(`test-notification: Notification limit reached for ${userId}, type ${type}`);
+      return res.status(429).send('Notification limit reached');
+    }
+    const message = await generateNotificationMessage(type, userId, coins);
+    await saveNotificationToFirestore(message, type, userId, false);
+    const success = await sendNotification(message, null, oneSignalId, type, userId, coins);
     res.send({
       message: success ? 'Notification sent successfully' : 'Failed to send notification',
-      details: { userId, oneSignalId, message, type },
+      details: { userId, oneSignalId, message, type, coins },
     });
   } catch (error) {
     console.error('test-notification: Error:', error.message, error.stack);
@@ -554,6 +661,7 @@ app.post('/test-notification', async (req, res) => {
   }
 });
 
+// Premium snapshot listener for subscription notifications
 db.collection('Premium').onSnapshot(
   (snapshot) => {
     console.log('Premium snapshot triggered at', getIstTime(), 'changes:', snapshot.docChanges().length);
@@ -589,14 +697,14 @@ db.collection('Premium').onSnapshot(
           }
 
           const userDoc = await db.collection('users').doc(userId).get();
-          if (userDoc.exists && userDoc.data().oneSignalId && isValidOneSignalId(userDoc.data().oneSignalId)) {
+          if (userDoc.exists && userDoc.data().oneSignalId && isValidOneSignalId(userDoc.data().oneSignalId) && (await canSendNotification(userId, 'subscription'))) {
             const oneSignalId = userDoc.data().oneSignalId;
-            const message = await generateNotificationMessage('subscription');
-            await saveNotificationToFirestore(message, 'subscription', userId, false); // Save before sending
+            const message = await generateNotificationMessage('subscription', userId);
+            await saveNotificationToFirestore(message, 'subscription', userId, false);
             const success = await sendNotification(message, null, oneSignalId, 'subscription', userId);
             console.log(`Subscription notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}`);
           } else {
-            console.warn(`No valid oneSignalId found for user ${userId}`, {
+            console.warn(`No valid oneSignalId or limit reached for user ${userId}`, {
               userId,
               exists: userDoc.exists,
               oneSignalId: userDoc.data()?.oneSignalId,
@@ -613,6 +721,7 @@ db.collection('Premium').onSnapshot(
   }
 );
 
+// Users snapshot listener for cooldown and ad notifications
 db.collection('users').onSnapshot(
   (snapshot) => {
     console.log('Users snapshot triggered at', getIstTime(), 'changes:', snapshot.docChanges().length);
@@ -631,16 +740,20 @@ db.collection('users').onSnapshot(
         const userData = change.doc.data();
         const oneSignalId = userData.oneSignalId;
 
-        if (change.type === 'modified') {
-          const oldData = change.oldIndex !== -1 ? snapshot.docs[change.oldIndex].data() : {};
-          if (userData.coins > (oldData.coins || 0) && !userData.lastAdTime && oneSignalId && isValidOneSignalId(oneSignalId)) {
-            const message = await generateNotificationMessage('coin_purchase');
-            await saveNotificationToFirestore(message, 'coin_purchase', userId, false); // Save before sending
-            const success = await sendNotification(message, null, oneSignalId, 'coin_purchase', userId);
-            console.log(`Coin purchase notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}`);
-          }
+        // Schedule ad notifications (3 per day)
+        if ((change.type === 'added' || change.type === 'modified') && userData.adNotificationCount < 3 && oneSignalId && isValidOneSignalId(oneSignalId) && (await canSendNotification(userId, 'ad'))) {
+          const adNotificationInterval = Math.floor(Math.random() * (120 - 60 + 1)) + 60; // 1-2 hours
+          setTimeout(async () => {
+            if (await canSendNotification(userId, 'ad')) {
+              const message = await generateNotificationMessage('ad', userId);
+              await saveNotificationToFirestore(message, 'ad', userId, false);
+              const success = await sendNotification(message, null, oneSignalId, 'ad', userId);
+              console.log(`Ad notification ${success ? 'sent' : 'failed'} to ${userId}, count: ${userData.adNotificationCount + 1}`);
+            }
+          }, adNotificationInterval * 60 * 1000);
         }
 
+        // Handle cooldown notifications
         if ((change.type === 'added' || change.type === 'modified') && userData.adCooldownEndTime && oneSignalId && isValidOneSignalId(oneSignalId)) {
           const now = Date.now();
           const cooldownEndTime = userData.adCooldownEndTime;
@@ -651,9 +764,9 @@ db.collection('users').onSnapshot(
             console.log(`Scheduling cooldown notification for ${userId} in ${timeUntilCooldownEnds / 1000} seconds`);
             setTimeout(async () => {
               const userDoc = await db.collection('users').doc(userId).get();
-              if (userDoc.exists && userDoc.data().adCooldownEndTime <= Date.now() && userData.adsWatched >= ADS_TO_WATCH) {
-                const message = await generateNotificationMessage('cooldown');
-                await saveNotificationToFirestore(message, 'cooldown', userId, false); // Save before sending
+              if (userDoc.exists && userDoc.data().adCooldownEndTime <= Date.now() && userData.adsWatched >= ADS_TO_WATCH && (await canSendNotification(userId, 'cooldown'))) {
+                const message = await generateNotificationMessage('cooldown', userId);
+                await saveNotificationToFirestore(message, 'cooldown', userId, false);
                 const success = await sendNotification(message, null, oneSignalId, 'cooldown', userId);
                 console.log(`Cooldown notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}`);
                 await db.collection('users').doc(userId).update({ adCooldownEndTime: null });
@@ -661,31 +774,13 @@ db.collection('users').onSnapshot(
                 console.log(`Cooldown notification skipped for ${userId}: exists=${userDoc.exists}, currentTime=${Date.now()}, cooldownEndTime=${userDoc.data()?.adCooldownEndTime}, adsWatched=${userData.adsWatched}`);
               }
             }, timeUntilCooldownEnds);
-          } else if (timeUntilCooldownEnds <= 0 && userData.adsWatched >= ADS_TO_WATCH) {
+          } else if (timeUntilCooldownEnds <= 0 && userData.adsWatched >= ADS_TO_WATCH && (await canSendNotification(userId, 'cooldown'))) {
             console.log(`Cooldown already expired for ${userId}, sending immediate notification`);
-            const message = await generateNotificationMessage('cooldown');
-            await saveNotificationToFirestore(message, 'cooldown', userId, false); // Save before sending
+            const message = await generateNotificationMessage('cooldown', userId);
+            await saveNotificationToFirestore(message, 'cooldown', userId, false);
             const success = await sendNotification(message, null, oneSignalId, 'cooldown', userId);
             console.log(`Immediate cooldown notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}, message: ${message}`);
             await db.collection('users').doc(userId).update({ adCooldownEndTime: null });
-          } else {
-            console.log(`No cooldown notification scheduled for ${userId}: timeUntilCooldownEnds=${timeUntilCooldownEnds}, adsWatched=${userData.adsWatched}`);
-          }
-        }
-
-        // Schedule ad notifications if count < 3
-        if ((change.type === 'added' || change.type === 'modified') && userData.adNotificationCount < 3 && oneSignalId && isValidOneSignalId(oneSignalId)) {
-          const adNotificationInterval = Math.floor(Math.random() * (120 - 60 + 1)) + 60; // 1-2 hours in minutes
-          if (userData.adNotificationCount === 0) {
-            setTimeout(async () => {
-              const message = await generateNotificationMessage('ad');
-              await saveNotificationToFirestore(message, 'ad', userId, false); // Save before sending
-              const success = await sendNotification(message, null, oneSignalId, 'ad', userId);
-              if (success) {
-                await db.collection('users').doc(userId).update({ adNotificationCount: userData.adNotificationCount + 1 });
-                console.log(`Ad notification ${success ? 'sent' : 'failed'} to ${userId}, count: ${userData.adNotificationCount + 1}`);
-              }
-            }, adNotificationInterval * 60 * 1000);
           }
         }
       } catch (error) {
@@ -703,7 +798,7 @@ app.get('/ping', (req, res) => res.send('OK'));
 try {
   app.listen(port, () => {
     console.log(`Server running on port ${port} at ${getIstTime()}`);
-    scheduleNotifications(); // Start notification scheduling
+    scheduleNotifications();
   });
 } catch (error) {
   console.error('Failed to start server:', error.message, error.stack);
@@ -733,7 +828,7 @@ const ONESIGNAL_API_KEY = process.env.ONESIGNAL_API_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const RAILWAY_URL = process.env.RAILWAY_URL || 'https://vidalyzer-backend-production.up.railway.app';
 
-// Enhanced environment variable validation
+// Environment variable validation
 if (!ONESIGNAL_APP_ID || !ONESIGNAL_API_KEY || !OPENAI_API_KEY || !process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_CLIENT_EMAIL || !process.env.FIREBASE_PRIVATE_KEY) {
   console.error('Missing required environment variables:', {
     ONESIGNAL_APP_ID: !!ONESIGNAL_APP_ID,
