@@ -214,7 +214,7 @@ Create short, attention-grabbing push notifications (max 10–15 words) to:
 }
 
 // Send push notification via OneSignal with retry mechanism and fallback
-async function sendNotification(message, target = 'All', oneSignalId = null, retries = 3) {
+async function sendNotification(message, target = 'All', oneSignalId = null, type = 'ad', userId = null, retries = 3) {
   for (let i = 0; i < retries; i++) {
     try {
       if (!ONESIGNAL_API_KEY || !ONESIGNAL_APP_ID) {
@@ -224,7 +224,7 @@ async function sendNotification(message, target = 'All', oneSignalId = null, ret
         console.warn(`Invalid oneSignalId format: ${oneSignalId}`);
         return false;
       }
-      console.log('Preparing to send notification:', { message, target, oneSignalId });
+      console.log('Preparing to send notification:', { message, target, oneSignalId, type, userId });
 
       const notificationData = {
         app_id: ONESIGNAL_APP_ID,
@@ -253,6 +253,7 @@ async function sendNotification(message, target = 'All', oneSignalId = null, ret
           notificationId: response.data.id,
           recipients: response.data.recipients,
         });
+        await saveNotificationToFirestore(message, type, userId, true);
         return true;
       } else {
         console.error('Notification sent but no ID returned:', response.data);
@@ -265,11 +266,13 @@ async function sendNotification(message, target = 'All', oneSignalId = null, ret
           console.log(`Found ${validOneSignalIds.length} valid oneSignalIds for fallback:`, validOneSignalIds);
           if (validOneSignalIds.length > 0) {
             for (const id of validOneSignalIds) {
-              await sendNotification(message, null, id, retries);
+              await sendNotification(message, null, id, type, userId, retries);
             }
+            await saveNotificationToFirestore(message, type, userId, true);
             return true;
           }
         }
+        await saveNotificationToFirestore(message, type, userId, false);
         return false;
       }
     } catch (error) {
@@ -277,6 +280,8 @@ async function sendNotification(message, target = 'All', oneSignalId = null, ret
         message,
         target,
         oneSignalId,
+        type,
+        userId,
         error: error.response ? error.response.data : error.message,
         status: error.response ? error.response.status : null,
       });
@@ -284,11 +289,27 @@ async function sendNotification(message, target = 'All', oneSignalId = null, ret
         console.log(`Rate limited, retrying in ${i + 1}s...`);
         await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
       } else {
+        await saveNotificationToFirestore(message, type, userId, false);
         return false;
       }
     }
   }
+  await saveNotificationToFirestore(message, type, userId, false);
   return false;
+}
+
+// Save notification to Firestore
+async function saveNotificationToFirestore(message, type, userId, success) {
+  const collectionName = `${type}_notifications`;
+  const docId = new Date().toISOString().replace(/[:.]/g, '-');
+  await db.collection(collectionName).doc(docId).set({
+    message,
+    type,
+    userId: userId || null,
+    timestamp: new Date().toISOString(),
+    success,
+  });
+  console.log(`Notification saved to ${collectionName}/${docId}:`, { message, userId, success });
 }
 
 // Check and update ad watch status
@@ -352,7 +373,8 @@ async function scheduleNotifications() {
   cron.schedule(`0 */${intervalMinutes} * * * *`, async () => {
     console.log(`${randomType} notification triggered at ${getIstTime()}`);
     const message = await generateNotificationMessage(randomType);
-    const success = await sendNotification(message, 'Active Users');
+    await saveNotificationToFirestore(message, randomType, null, false); // Save before sending
+    const success = await sendNotification(message, 'Active Users', null, randomType);
     console.log(`${randomType} notification ${success ? 'sent' : 'failed'} at ${getIstTime()}: ${message}`);
   }, { scheduled: true, timezone: 'Asia/Kolkata' });
 }
@@ -454,7 +476,8 @@ app.post('/update-onesignal', async (req, res) => {
 
     if (userDoc.exists && userDoc.data().firstLogin === true) {
       const welcomeMessage = 'Thank you for downloading Vidalyzer! Grow your Instagram and YouTube faster now!';
-      const success = await sendNotification(welcomeMessage, null, oneSignalId);
+      await saveNotificationToFirestore(welcomeMessage, 'welcome', userId, false); // Save before sending
+      const success = await sendNotification(welcomeMessage, null, oneSignalId, 'welcome', userId);
       console.log(`Welcome notification ${success ? 'sent' : 'failed'} to ${userId} on first login`);
       await userRef.update({ firstLogin: false });
     }
@@ -484,7 +507,8 @@ app.post('/test-notification', async (req, res) => {
       return res.status(400).send('Invalid oneSignalId format');
     }
     const message = await generateNotificationMessage(type, userId);
-    const success = await sendNotification(message, null, oneSignalId);
+    await saveNotificationToFirestore(message, type, userId, false); // Save before sending
+    const success = await sendNotification(message, null, oneSignalId, type, userId);
     res.send({
       message: success ? 'Notification sent successfully' : 'Failed to send notification',
       details: { userId, oneSignalId, message, type },
@@ -533,7 +557,8 @@ db.collection('Premium').onSnapshot(
           if (userDoc.exists && userDoc.data().oneSignalId && isValidOneSignalId(userDoc.data().oneSignalId)) {
             const oneSignalId = userDoc.data().oneSignalId;
             const message = await generateNotificationMessage('subscription');
-            const success = await sendNotification(message, null, oneSignalId);
+            await saveNotificationToFirestore(message, 'subscription', userId, false); // Save before sending
+            const success = await sendNotification(message, null, oneSignalId, 'subscription', userId);
             console.log(`Subscription notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}`);
           } else {
             console.warn(`No valid oneSignalId found for user ${userId}`, {
@@ -575,7 +600,8 @@ db.collection('users').onSnapshot(
           const oldData = change.oldIndex !== -1 ? snapshot.docs[change.oldIndex].data() : {};
           if (userData.coins > (oldData.coins || 0) && !userData.lastAdTime && oneSignalId && isValidOneSignalId(oneSignalId)) {
             const message = await generateNotificationMessage('coin_purchase');
-            const success = await sendNotification(message, null, oneSignalId);
+            await saveNotificationToFirestore(message, 'coin_purchase', userId, false); // Save before sending
+            const success = await sendNotification(message, null, oneSignalId, 'coin_purchase', userId);
             console.log(`Coin purchase notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}`);
           }
         }
@@ -592,7 +618,8 @@ db.collection('users').onSnapshot(
               const userDoc = await db.collection('users').doc(userId).get();
               if (userDoc.exists && userDoc.data().adCooldownEndTime <= Date.now() && userData.adsWatched >= ADS_TO_WATCH) {
                 const message = await generateNotificationMessage('cooldown');
-                const success = await sendNotification(message, null, oneSignalId);
+                await saveNotificationToFirestore(message, 'cooldown', userId, false); // Save before sending
+                const success = await sendNotification(message, null, oneSignalId, 'cooldown', userId);
                 console.log(`Cooldown notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}`);
                 await db.collection('users').doc(userId).update({ adCooldownEndTime: null });
               } else {
@@ -602,7 +629,8 @@ db.collection('users').onSnapshot(
           } else if (timeUntilCooldownEnds <= 0 && userData.adsWatched >= ADS_TO_WATCH) {
             console.log(`Cooldown already expired for ${userId}, sending immediate notification`);
             const message = await generateNotificationMessage('cooldown');
-            const success = await sendNotification(message, null, oneSignalId);
+            await saveNotificationToFirestore(message, 'cooldown', userId, false); // Save before sending
+            const success = await sendNotification(message, null, oneSignalId, 'cooldown', userId);
             console.log(`Immediate cooldown notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}, message: ${message}`);
             await db.collection('users').doc(userId).update({ adCooldownEndTime: null });
           } else {
@@ -616,7 +644,8 @@ db.collection('users').onSnapshot(
           if (userData.adNotificationCount === 0) {
             setTimeout(async () => {
               const message = await generateNotificationMessage('ad');
-              const success = await sendNotification(message, null, oneSignalId);
+              await saveNotificationToFirestore(message, 'ad', userId, false); // Save before sending
+              const success = await sendNotification(message, null, oneSignalId, 'ad', userId);
               if (success) {
                 await db.collection('users').doc(userId).update({ adNotificationCount: userData.adNotificationCount + 1 });
                 console.log(`Ad notification ${success ? 'sent' : 'failed'} to ${userId}, count: ${userData.adNotificationCount + 1}`);
