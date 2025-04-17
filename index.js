@@ -83,7 +83,7 @@ async function generateNotificationMessage(type = 'ad', userId = null) {
   }
 }
 
-// Send push notification via OneSignal with retry mechanism
+// Send push notification via OneSignal with retry mechanism and fallback
 async function sendNotification(message, target = 'All', oneSignalId = null, retries = 3) {
   for (let i = 0; i < retries; i++) {
     try {
@@ -126,6 +126,20 @@ async function sendNotification(message, target = 'All', oneSignalId = null, ret
         return true;
       } else {
         console.error('Notification sent but no ID returned:', response.data);
+        // Fallback: Send to individual subscribed users from Firestore
+        if (!oneSignalId && target === 'Active Users') {
+          const usersSnapshot = await db.collection('users').where('oneSignalId', '!=', '').get();
+          const validOneSignalIds = usersSnapshot.docs
+            .map(doc => doc.data().oneSignalId)
+            .filter(id => isValidOneSignalId(id));
+          console.log(`Found ${validOneSignalIds.length} valid oneSignalIds for fallback:`, validOneSignalIds);
+          if (validOneSignalIds.length > 0) {
+            for (const id of validOneSignalIds) {
+              await sendNotification(message, null, id, retries);
+            }
+            return true;
+          }
+        }
         return false;
       }
     } catch (error) {
@@ -293,7 +307,6 @@ app.post('/update-onesignal', async (req, res) => {
     const currentData = userDoc.exists ? userDoc.data() : {};
     console.log(`Current oneSignalId for ${userId}: ${currentData.oneSignalId}`);
 
-    // Only update if oneSignalId is valid and different, avoid null/empty overwrites
     if (oneSignalId && oneSignalId !== currentData.oneSignalId) {
       await userRef.set({ oneSignalId }, { merge: true });
       console.log(`update-onesignal: Updated oneSignalId for user ${userId} to ${oneSignalId}`);
@@ -301,12 +314,11 @@ app.post('/update-onesignal', async (req, res) => {
       console.log(`update-onesignal: No update needed for ${userId}, oneSignalId unchanged or invalid`);
     }
 
-    // Send welcome notification on first login
     if (userDoc.exists && userDoc.data().firstLogin === true) {
       const welcomeMessage = 'Thank you for downloading Vidalyzer! Grow your Instagram and YouTube faster now!';
       const success = await sendNotification(welcomeMessage, null, oneSignalId);
       console.log(`Welcome notification ${success ? 'sent' : 'failed'} to ${userId} on first login`);
-      await userRef.update({ firstLogin: false }); // Mark as not first login
+      await userRef.update({ firstLogin: false });
     }
 
     res.send({ message: 'OneSignal ID updated successfully' });
