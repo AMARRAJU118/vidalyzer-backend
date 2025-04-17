@@ -197,40 +197,12 @@ async function awardCoins(userId) {
 // Schedule notifications for IST
 const getIstTime = () => new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' });
 
-// Ad and motivational cron jobs
-cron.schedule('0 10 * * *', async () => {
-  console.log('Ad cron (10 AM) triggered at', getIstTime());
-  const adMessage = await generateNotificationMessage('ad');
-  const success = await sendNotification(adMessage, 'Active Users');
-  console.log(`Ad notification ${success ? 'sent' : 'failed'} at ${getIstTime()}: ${adMessage}`);
-}, { scheduled: true, timezone: 'Asia/Kolkata' });
-
-cron.schedule('0 14 * * *', async () => {
-  console.log('Ad cron (2 PM) triggered at', getIstTime());
-  const adMessage = await generateNotificationMessage('ad');
-  const success = await sendNotification(adMessage, 'Active Users');
-  console.log(`Ad notification ${success ? 'sent' : 'failed'} at ${getIstTime()}: ${adMessage}`);
-}, { scheduled: true, timezone: 'Asia/Kolkata' });
-
-cron.schedule('0 18 * * *', async () => {
-  console.log('Ad cron (6 PM) triggered at', getIstTime());
-  const adMessage = await generateNotificationMessage('ad');
-  const success = await sendNotification(adMessage, 'Active Users');
-  console.log(`Ad notification ${success ? 'sent' : 'failed'} at ${getIstTime()}: ${adMessage}`);
-}, { scheduled: true, timezone: 'Asia/Kolkata' });
-
-cron.schedule('0 9 * * *', async () => {
-  console.log('Motivational cron (9 AM) triggered at', getIstTime());
+// Hourly notification cron job
+cron.schedule('0 * * * *', async () => {
+  console.log('Hourly notification triggered at', getIstTime());
   const motivationalMessage = await generateNotificationMessage('motivational');
   const success = await sendNotification(motivationalMessage, 'Active Users');
-  console.log(`Motivational notification ${success ? 'sent' : 'failed'} at ${getIstTime()}: ${motivationalMessage}`);
-}, { scheduled: true, timezone: 'Asia/Kolkata' });
-
-cron.schedule('0 16 * * *', async () => {
-  console.log('Motivational cron (4 PM) triggered at', getIstTime());
-  const motivationalMessage = await generateNotificationMessage('motivational');
-  const success = await sendNotification(motivationalMessage, 'Active Users');
-  console.log(`Motivational notification ${success ? 'sent' : 'failed'} at ${getIstTime()}: ${motivationalMessage}`);
+  console.log(`Hourly notification ${success ? 'sent' : 'failed'} at ${getIstTime()}: ${motivationalMessage}`);
 }, { scheduled: true, timezone: 'Asia/Kolkata' });
 
 // API endpoints
