@@ -140,7 +140,7 @@ async function checkAdStatus(userId) {
         oneSignalId: '',
       },
       { merge: true }
-集團);
+    );
     console.log(`Initialized user document for ${userId}`);
     return {
       adsWatched: 0,
