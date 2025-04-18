@@ -134,22 +134,20 @@ async function checkAdStatus(userId) {
     await userRef.set(
       {
         adsWatched: 0,
-        lastAdTime: null,
         coins: 0,
+        adCooldownEndTime: 0,
         recentRewards: [],
         oneSignalId: '',
-        adCooldownEndTime: null,
       },
       { merge: true }
-    );
+集團);
     console.log(`Initialized user document for ${userId}`);
     return {
       adsWatched: 0,
-      lastAdTime: null,
       coins: 0,
+      adCooldownEndTime: 0,
       recentRewards: [],
       oneSignalId: '',
-      adCooldownEndTime: null,
     };
   }
   const data = doc.data();
@@ -157,45 +155,73 @@ async function checkAdStatus(userId) {
   return data;
 }
 
-// Award coins and handle rewards
-async function awardCoins(userId) {
-  console.log(`Awarding coins for user: ${userId}`);
+// Award reward (coins or voucher)
+async function awardReward(userId) {
+  console.log(`Awarding reward for user: ${userId}`);
   const userData = await checkAdStatus(userId);
   if (!userData) {
-    console.error(`awardCoins: Invalid user data for user ${userId}`);
-    return { coins: 0, message: 'Invalid user data', error: 'User data not found' };
+    console.error(`awardReward: Invalid user data for user ${userId}`);
+    return { message: 'Invalid user data', error: 'User data not found' };
   }
   if (userData.adsWatched < ADS_TO_WATCH) {
-    console.log(`awardCoins: Not enough ads watched for user ${userId}, adsWatched: ${userData.adsWatched}`);
-    return { coins: 0, message: 'Watch 10 ads to earn coins!' };
+    console.log(`awardReward: Not enough ads watched for user ${userId}, adsWatched: ${userData.adsWatched}`);
+    return { message: `Watch ${ADS_TO_WATCH - userData.adsWatched} more ads!` };
   }
 
   try {
-    const coins = Math.floor(Math.random() * (25 - 10 + 1)) + 10;
-    const newCoins = userData.coins + coins;
+    const rewardType = Math.floor(Math.random() * 100);
+    let rewardMessage;
+    let voucherUrl = null;
+    let coins = userData.coins;
+
+    if (rewardType < 60) {
+      // Voucher (60% chance)
+      const vouchers = [
+        { name: 'Denim Jackets Under Rs 399', url: 'https://fktr.in/KxfRFR9' },
+        { name: 'Upto 75% Off (AJIOMANIA SALE)', url: 'https://ajiio.in/yEpPt6V' },
+        { name: 'Men\'s Shirts Under Rs 399', url: 'https://myntr.it/oOKAo5S' },
+        { name: 'Men\'s Cargos Under Rs 499', url: 'https://fktr.in/8GhVuyO' },
+      ];
+      const selectedVoucher = vouchers[Math.floor(Math.random() * vouchers.length)];
+      rewardMessage = `Voucher: ${selectedVoucher.name}`;
+      voucherUrl = selectedVoucher.url;
+    } else {
+      // Coins (40% chance)
+      const coinType = Math.floor(Math.random() * 100);
+      let coinsToAdd;
+      if (coinType < 30) {
+        coinsToAdd = 5; // 30% chance
+      } else if (coinType < 80) {
+        coinsToAdd = 4; // 50% chance
+      } else {
+        coinsToAdd = 3; // 20% chance
+      }
+      coins += coinsToAdd;
+      rewardMessage = `${coinsToAdd} Coins`;
+    }
+
     const rewards = userData.recentRewards || [];
-    const newReward = {
-      name: `${coins} Coins`,
-      timestamp: new Date().toISOString(),
-    };
+    const newReward = { name: rewardMessage };
+    if (voucherUrl) {
+      newReward.url = voucherUrl;
+    }
     rewards.unshift(newReward);
     if (rewards.length > 5) rewards.pop();
 
     const updateData = {
       adsWatched: 0,
-      lastAdTime: new Date().toISOString(),
       adCooldownEndTime: Date.now() + COOLDOWN_MINUTES * 60 * 1000,
-      coins: newCoins,
+      coins,
       recentRewards: rewards,
     };
 
     console.log(`Attempting to update user ${userId} with data:`, updateData);
     await db.collection('users').doc(userId).update(updateData);
-    console.log(`Successfully awarded ${coins} coins to user ${userId}`);
+    console.log(`Successfully awarded ${rewardMessage} to user ${userId}`);
 
-    return { coins, message: `Earned ${coins} coins! Elevate your growth! 🎉` };
+    return { message: `Earned ${rewardMessage}! Elevate your growth! 🎉`, reward: rewardMessage, url: voucherUrl };
   } catch (error) {
-    console.error(`Error awarding coins for user ${userId}:`, {
+    console.error(`Error awarding reward for user ${userId}:`, {
       message: error.message,
       code: error.code,
       stack: error.stack,
@@ -204,7 +230,6 @@ async function awardCoins(userId) {
       coins: userData.coins,
     });
     return {
-      coins: 0,
       message: 'Failed to save reward. Please try again.',
       error: error.message || 'Unknown error saving reward',
     };
@@ -224,27 +249,25 @@ app.post('/watch-ad', async (req, res) => {
     console.error(`watch-ad: Failed to access user data for ${userId}`);
     return res.status(500).send('Error accessing user data');
   }
-  const now = new Date();
-  const lastAdTime = userData.lastAdTime ? new Date(userData.lastAdTime) : null;
-  const cooldownElapsed = !lastAdTime || (now - lastAdTime) / (1000 * 60) >= COOLDOWN_MINUTES;
+  const now = Date.now();
+  const cooldownElapsed = userData.adCooldownEndTime <= now;
 
   if (userData.adsWatched < ADS_TO_WATCH && cooldownElapsed) {
     await db.collection('users').doc(userId).update({
-      adsWatched: user    userData.adsWatched + 1,
-      lastAdTime: new Date().toISOString(),
+      adsWatched: userData.adsWatched + 1,
     });
     console.log(`Ad watched for user ${userId}: ${userData.adsWatched + 1}/${ADS_TO_WATCH}`);
     res.send({ message: `Ad ${userData.adsWatched + 1}/${ADS_TO_WATCH} watched! Grow soon!` });
   } else if (!cooldownElapsed) {
     console.log(`watch-ad: Cooldown active for user ${userId}`);
-    res.status(429).send({ message: `Cooldown active. Wait ${COOLDOWN_MINUTES} minutes.` });
+    res.status(429).send({ message: `Cooldown active. Wait ${Math.ceil((userData.adCooldownEndTime - now) / 60000)} minutes.` });
   } else {
-    const { coins, message, error } = await awardCoins(userId);
-    console.log(`watch-ad: Award result for ${userId}: ${message}, coins: ${coins}, error: ${error || 'none'}`);
+    const { message, reward, url, error } = await awardReward(userId);
+    console.log(`watch-ad: Award result for ${userId}: ${message}, reward: ${reward || 'none'}, error: ${error || 'none'}`);
     if (error) {
       res.status(500).send({ message, error });
     } else {
-      res.send({ message, coins });
+      res.send({ message, reward, url });
     }
   }
 });
@@ -281,9 +304,13 @@ app.post('/buy-feature', async (req, res) => {
   }
 
   if (userData.coins >= cost) {
+    const rewards = userData.recentRewards || [];
+    rewards.unshift({ name: `${quantity} ${feature}` });
+    if (rewards.length > 5) rewards.pop();
+
     await db.collection('users').doc(userId).update({
       coins: userData.coins - cost,
-      recentRewards: [...(userData.recentRewards || []), { name: `${quantity} ${feature}`, timestamp: new Date().toISOString() }].slice(-5),
+      recentRewards: rewards,
     });
     console.log(`buy-feature: Purchased ${quantity} ${feature} for user ${userId}, cost: ${cost}`);
     res.send({ message: `Bought ${quantity} ${feature} to skyrocket growth!` });
@@ -348,7 +375,7 @@ db.collection('users').onSnapshot(
                 await saveNotificationToFirestore(message, 'cooldown', userId, false);
                 const success = await sendNotification(message, oneSignalId, userId);
                 console.log(`Cooldown notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}, message: ${message}`);
-                await db.collection('users').doc(userId).update({ adCooldownEndTime: null });
+                await db.collection('users').doc(userId).update({ adCooldownEndTime: 0 });
               }
             }, timeUntilCooldownEnds);
           } else if (timeUntilCooldownEnds <= 0 && userData.adsWatched >= ADS_TO_WATCH) {
@@ -357,7 +384,7 @@ db.collection('users').onSnapshot(
             await saveNotificationToFirestore(message, 'cooldown', userId, false);
             const success = await sendNotification(message, oneSignalId, userId);
             console.log(`Immediate cooldown notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}, message: ${message}`);
-            await db.collection('users').doc(userId).update({ adCooldownEndTime: null });
+            await db.collection('users').doc(userId).update({ adCooldownEndTime: 0 });
           }
         }
       } catch (error) {
@@ -391,7 +418,7 @@ setInterval(() => {
 
 // Constants and helper functions
 const ADS_TO_WATCH = 10;
-const COOLDOWN_MINUTES = 12;
+const COOLDOWN_MINUTES = 15;
 
 function isValidOneSignalId(id) {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
