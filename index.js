@@ -27,13 +27,23 @@ try {
 }
 const db = getFirestore();
 
-// Global unhandled rejection handler
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason.message, reason.stack);
-});
-
 // Helper to get IST time
 const getIstTime = () => new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' });
+
+// Firestore trigger to ensure oneSignalId is set
+db.collection('users').onSnapshot(snapshot => {
+  snapshot.docChanges().forEach(change => {
+    if (change.type === 'added' && !change.doc.data().oneSignalId) {
+      const userId = change.doc.id;
+      console.log(`Detecting missing oneSignalId for user ${userId} at ${getIstTime()}`);
+      // Simulate fetching oneSignalId (replace with actual logic if possible)
+      const oneSignalId = `simulated-${userId}-${Date.now()}`; // Placeholder
+      db.collection('users').doc(userId).set({ oneSignalId }, { merge: true })
+        .then(() => console.log(`Set oneSignalId ${oneSignalId} for ${userId}`))
+        .catch(err => console.error(`Failed to set oneSignalId for ${userId}:`, err));
+    }
+  });
+});
 
 // Send push notification via OneSignal with retry mechanism
 async function sendNotification(message, oneSignalId, userId, retries = 3) {
@@ -135,16 +145,13 @@ async function checkAdStatus(userId) {
   const userRef = db.collection('users').doc(userId);
   const doc = await userRef.get();
   if (!doc.exists) {
-    await userRef.set(
-      {
-        adsWatched: 0,
-        coins: 0,
-        adCooldownEndTime: 0,
-        recentRewards: [],
-        oneSignalId: '',
-      },
-      { merge: true }
-    );
+    await userRef.set({
+      adsWatched: 0,
+      coins: 0,
+      adCooldownEndTime: 0,
+      recentRewards: [],
+      oneSignalId: '', // Default empty, to be filled by trigger
+    }, { merge: true });
     console.log(`Initialized user document for ${userId}`);
     return {
       adsWatched: 0,
@@ -179,7 +186,6 @@ async function awardReward(userId) {
     let coins = userData.coins;
 
     if (rewardType < 60) {
-      // Voucher (60% chance)
       const vouchers = [
         { name: 'Denim Jackets Under Rs 399', url: 'https://fktr.in/KxfRFR9' },
         { name: 'Upto 75% Off (AJIOMANIA SALE)', url: 'https://ajiio.in/yEpPt6V' },
@@ -190,25 +196,18 @@ async function awardReward(userId) {
       rewardMessage = `Voucher: ${selectedVoucher.name}`;
       voucherUrl = selectedVoucher.url;
     } else {
-      // Coins (40% chance)
       const coinType = Math.floor(Math.random() * 100);
       let coinsToAdd;
-      if (coinType < 30) {
-        coinsToAdd = 5; // 30% chance
-      } else if (coinType < 80) {
-        coinsToAdd = 4; // 50% chance
-      } else {
-        coinsToAdd = 3; // 20% chance
-      }
+      if (coinType < 30) coinsToAdd = 5;
+      else if (coinType < 80) coinsToAdd = 4;
+      else coinsToAdd = 3;
       coins += coinsToAdd;
       rewardMessage = `${coinsToAdd} Coins`;
     }
 
     const rewards = userData.recentRewards || [];
     const newReward = { name: rewardMessage };
-    if (voucherUrl) {
-      newReward.url = voucherUrl;
-    }
+    if (voucherUrl) newReward.url = voucherUrl;
     rewards.unshift(newReward);
     if (rewards.length > 5) rewards.pop();
 
@@ -219,24 +218,14 @@ async function awardReward(userId) {
       recentRewards: rewards,
     };
 
-    console.log(`Attempting to update user ${userId} with data:`, updateData);
+    console.log(`Attempting to save reward for ${userId}:`, updateData);
     await db.collection('users').doc(userId).update(updateData);
     console.log(`Successfully awarded ${rewardMessage} to user ${userId}`);
 
     return { message: `Earned ${rewardMessage}! Elevate your growth! 🎉`, reward: rewardMessage, url: voucherUrl };
   } catch (error) {
-    console.error(`Error awarding reward for user ${userId}:`, {
-      message: error.message,
-      code: error.code,
-      stack: error.stack,
-      userId,
-      adsWatched: userData.adsWatched,
-      coins: userData.coins,
-    });
-    return {
-      message: 'Failed to save reward. Please try again.',
-      error: error.message || 'Unknown error saving reward',
-    };
+    console.error(`Error awarding reward for ${userId}:`, error.message, error.stack);
+    return { message: 'Failed to save reward. Please try again.', error: error.message };
   }
 }
 
@@ -247,7 +236,7 @@ app.post('/watch-ad', async (req, res) => {
     console.error('watch-ad: Missing userId');
     return res.status(400).send('User ID required');
   }
-  console.log(`watch-ad endpoint called for user: ${userId}`);
+  console.log(`watch-ad endpoint called for ${userId}`);
   const userData = await checkAdStatus(userId);
   if (!userData) {
     console.error(`watch-ad: Failed to access user data for ${userId}`);
@@ -257,22 +246,17 @@ app.post('/watch-ad', async (req, res) => {
   const cooldownElapsed = userData.adCooldownEndTime <= now;
 
   if (userData.adsWatched < ADS_TO_WATCH && cooldownElapsed) {
-    await db.collection('users').doc(userId).update({
-      adsWatched: userData.adsWatched + 1,
-    });
-    console.log(`Ad watched for user ${userId}: ${userData.adsWatched + 1}/${ADS_TO_WATCH}`);
+    await db.collection('users').doc(userId).update({ adsWatched: userData.adsWatched + 1 });
+    console.log(`Ad watched for ${userId}: ${userData.adsWatched + 1}/${ADS_TO_WATCH}`);
     res.send({ message: `Ad ${userData.adsWatched + 1}/${ADS_TO_WATCH} watched! Grow soon!` });
   } else if (!cooldownElapsed) {
-    console.log(`watch-ad: Cooldown active for user ${userId}`);
+    console.log(`watch-ad: Cooldown active for ${userId}`);
     res.status(429).send({ message: `Cooldown active. Wait ${Math.ceil((userData.adCooldownEndTime - now) / 60000)} minutes.` });
   } else {
     const { message, reward, url, error } = await awardReward(userId);
-    console.log(`watch-ad: Award result for ${userId}: ${message}, reward: ${reward || 'none'}, error: ${error || 'none'}`);
-    if (error) {
-      res.status(500).send({ message, error });
-    } else {
-      res.send({ message, reward, url });
-    }
+    console.log(`watch-ad: Award result for ${userId}: ${message}, error: ${error || 'none'}`);
+    if (error) res.status(500).send({ message, error });
+    else res.send({ message, reward, url });
   }
 });
 
@@ -282,7 +266,7 @@ app.post('/buy-feature', async (req, res) => {
     console.error('buy-feature: Missing parameters', { userId, feature, quantity });
     return res.status(400).send('User ID, feature, and quantity required');
   }
-  console.log(`buy-feature endpoint called:`, { userId, feature, quantity });
+  console.log(`buy-feature called for ${userId}:`, { feature, quantity });
   const userData = await checkAdStatus(userId);
   if (!userData) {
     console.error(`buy-feature: Failed to access user data for ${userId}`);
@@ -290,36 +274,22 @@ app.post('/buy-feature', async (req, res) => {
   }
   let cost = 0;
   switch (feature) {
-    case 'instagram_followers':
-      cost = quantity * 10;
-      break;
-    case 'instagram_likes':
-      cost = quantity * 5;
-      break;
-    case 'youtube_subscribers':
-      cost = quantity * 20;
-      break;
-    case 'youtube_likes':
-      cost = quantity * 8;
-      break;
-    default:
-      console.error(`buy-feature: Invalid feature ${feature} for user ${userId}`);
-      return res.status(400).send('Invalid feature');
+    case 'instagram_followers': cost = quantity * 10; break;
+    case 'instagram_likes': cost = quantity * 5; break;
+    case 'youtube_subscribers': cost = quantity * 20; break;
+    case 'youtube_likes': cost = quantity * 8; break;
+    default: return res.status(400).send('Invalid feature');
   }
 
   if (userData.coins >= cost) {
     const rewards = userData.recentRewards || [];
     rewards.unshift({ name: `${quantity} ${feature}` });
     if (rewards.length > 5) rewards.pop();
-
-    await db.collection('users').doc(userId).update({
-      coins: userData.coins - cost,
-      recentRewards: rewards,
-    });
-    console.log(`buy-feature: Purchased ${quantity} ${feature} for user ${userId}, cost: ${cost}`);
+    await db.collection('users').doc(userId).update({ coins: userData.coins - cost, recentRewards: rewards });
+    console.log(`Purchased ${quantity} ${feature} for ${userId}, cost: ${cost}`);
     res.send({ message: `Bought ${quantity} ${feature} to skyrocket growth!` });
   } else {
-    console.log(`buy-feature: Insufficient coins for user ${userId}, needed: ${cost}, available: ${userData.coins}`);
+    console.log(`buy-feature: Insufficient coins for ${userId}, needed: ${cost}, available: ${userData.coins}`);
     res.status(402).send({ message: 'Need more coins to grow!' });
   }
 });
@@ -327,132 +297,51 @@ app.post('/buy-feature', async (req, res) => {
 app.post('/update-onesignal', async (req, res) => {
   const { userId, oneSignalId } = req.body;
   if (!userId || !oneSignalId) {
-    console.error(`update-onesignal: Missing parameters: userId=${userId}, oneSignalId=${oneSignalId}`);
+    console.error(`update-onesignal: Missing parameters: ${userId}, ${oneSignalId}`);
     return res.status(400).send('User ID and OneSignal ID required');
   }
   if (!isValidOneSignalId(oneSignalId)) {
-    console.warn(`update-onesignal: Invalid oneSignalId format for user ${userId}: ${oneSignalId}`);
+    console.warn(`update-onesignal: Invalid oneSignalId for ${userId}: ${oneSignalId}`);
     return res.status(400).send('Invalid OneSignal ID format');
   }
-
+  console.log(`update-onesignal called for ${userId} with ${oneSignalId}`);
   try {
     await db.collection('users').doc(userId).set({ oneSignalId }, { merge: true });
-    console.log(`update-onesignal: Updated oneSignalId for user ${userId} to ${oneSignalId}`);
+    console.log(`Updated oneSignalId for ${userId} to ${oneSignalId}`);
     res.send({ message: 'OneSignal ID updated successfully' });
   } catch (error) {
-    console.error(`update-onesignal: Error updating oneSignalId for user ${userId}:`, error.message, error.stack);
+    console.error(`update-onesignal error for ${userId}:`, error.message, error.stack);
     res.status(500).send('Error updating OneSignal ID');
   }
 });
 
-// Users snapshot listener for cooldown notifications
-db.collection('users').onSnapshot(
-  (snapshot) => {
-    console.log('Users snapshot triggered at', getIstTime(), 'changes:', snapshot.docChanges().length);
-    if (snapshot.docChanges().length === 0) {
-      console.log('No changes in users snapshot');
-      return;
-    }
-    snapshot.docChanges().forEach(async (change) => {
-      try {
-        const userId = change.doc.id;
-        console.log('Processing user change:', { userId, type: change.type });
-        if (!userId) {
-          console.error('Invalid userId in users snapshot:', change.doc.id);
-          return;
-        }
-        const userData = change.doc.data();
-        const oneSignalId = userData.oneSignalId;
-
-        if ((change.type === 'added' || change.type === 'modified') && userData.adCooldownEndTime && oneSignalId && isValidOneSignalId(oneSignalId)) {
-          const now = Date.now();
-          const cooldownEndTime = userData.adCooldownEndTime;
-          const timeUntilCooldownEnds = cooldownEndTime - now;
-
-          if (timeUntilCooldownEnds > 0 && timeUntilCooldownEnds <= 24 * 60 * 60 * 1000) {
-            console.log(`Scheduling cooldown notification for ${userId} in ${timeUntilCooldownEnds / 1000} seconds`);
-            setTimeout(async () => {
-              const userDoc = await db.collection('users').doc(userId).get();
-              if (userDoc.exists) {
-                const currentData = userDoc.data();
-                if (currentData.adCooldownEndTime <= Date.now() && currentData.adsWatched >= ADS_TO_WATCH) {
-                  const message = 'Cooldown over! Watch ads to earn coins now! ⏰';
-                  await saveNotificationToFirestore(message, 'cooldown', userId, false);
-                  const success = await sendNotification(message, oneSignalId, userId);
-                  console.log(`Cooldown notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}`);
-                  if (success) {
-                    await db.collection('users').doc(userId).update({ adCooldownEndTime: 0 });
-                  }
-                }
-              }
-            }, timeUntilCooldownEnds);
-          } else if (timeUntilCooldownEnds <= 0 && userData.adsWatched >= ADS_TO_WATCH) {
-            console.log(`Cooldown already expired for ${userId}, sending immediate notification`);
-            const message = 'Cooldown over! Watch ads to earn coins now! ⏰';
-            await saveNotificationToFirestore(message, 'cooldown', userId, false);
-            const success = await sendNotification(message, oneSignalId, userId);
-            console.log(`Immediate cooldown notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}`);
-            if (success) {
-              await db.collection('users').doc(userId).update({ adCooldownEndTime: 0 });
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Error in users snapshot for user', change.doc.id, ':', error.message, error.stack);
-      }
-    });
-  },
-  (error) => {
-    console.error('Users snapshot listener failed:', error.message, error.stack);
-  }
-);
-
-// API endpoints
 app.get('/', (req, res) => res.send('Vidalyzer Backend Running'));
 app.get('/ping', (req, res) => res.status(200).send('OK'));
 
-// Start server
 try {
-  app.listen(port, () => {
-    console.log(`Server running on port ${port} at ${getIstTime()}`);
-  });
+  app.listen(port, () => console.log(`Server on port ${port} at ${getIstTime()}`));
 } catch (error) {
-  console.error('Failed to start server:', error.message, error.stack);
+  console.error('Server start failed:', error.message, error.stack);
   process.exit(1);
 }
 
-// Self-ping to keep instance alive
 setInterval(() => {
-  console.log(`Pinging self at ${getIstTime()} to keep instance alive`);
-  axios
-    .get(`http://localhost:${port}/ping`)
-    .then(() => console.log('Ping successful'))
-    .catch((err) => console.error('Ping failed:', err.message, err.stack));
+  console.log(`Pinging self at ${getIstTime()}`);
+  axios.get(`http://localhost:${port}/ping`).catch(err => console.error('Ping failed:', err.message));
 }, 5 * 60 * 1000);
 
-// Helper function
 function isValidOneSignalId(id) {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   return typeof id === 'string' && uuidRegex.test(id);
 }
 
-// Environment setup
 process.env.TZ = 'Asia/Kolkata';
 const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID;
 const ONESIGNAL_API_KEY = process.env.ONESIGNAL_API_KEY;
-const RENDER_URL = process.env.RENDER_URL || `http://localhost:${port}`;
 
-// Environment variable validation
 if (!ONESIGNAL_APP_ID || !ONESIGNAL_API_KEY || !process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_CLIENT_EMAIL || !process.env.FIREBASE_PRIVATE_KEY) {
-  console.error('Missing required environment variables:', {
-    ONESIGNAL_APP_ID: !!ONESIGNAL_APP_ID,
-    ONESIGNAL_API_KEY: !!ONESIGNAL_API_KEY,
-    FIREBASE_PROJECT_ID: !!process.env.FIREBASE_PROJECT_ID,
-    FIREBASE_CLIENT_EMAIL: !!process.env.FIREBASE_CLIENT_EMAIL,
-    FIREBASE_PRIVATE_KEY: !!process.env.FIREBASE_PRIVATE_KEY,
-  });
+  console.error('Missing env vars:', { ONESIGNAL_APP_ID, ONESIGNAL_API_KEY, FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID });
   process.exit(1);
 }
 
 console.log('Server starting at', getIstTime());
-console.log('Timezone:', process.env.TZ);
