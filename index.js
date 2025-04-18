@@ -53,7 +53,6 @@ async function canSendNotification(userId, type) {
     } else if (type === 'welcome') {
       return !userData.welcomeSent;
     } else {
-      // For motivational, subscription, coin_purchase, cooldown
       const lastSent = userData[`last${type.charAt(0).toUpperCase() + type.slice(1)}Sent`] || 0;
       const now = Date.now();
       const oneHour = 60 * 60 * 1000;
@@ -280,7 +279,7 @@ Create short, reminder-style push notifications (max 10–15 words) to:
     );
     let message = response.data.choices[0].message.content.trim();
     if (type === 'coin_purchase') {
-      message = message.replace('${coins}', coins); // Ensure coins value is inserted
+      message = message.replace('${coins}', coins);
     }
     console.log(`Generated message for ${type}: ${message}`);
     return message.length <= 50 ? message : message.substring(0, 50).trim() + '…';
@@ -300,7 +299,7 @@ Create short, reminder-style push notifications (max 10–15 words) to:
   }
 }
 
-// Send push notification via OneSignal with retry mechanism
+// Send push notification via OneSignal with retry mechanism and vibration
 async function sendNotification(message, target = 'All', oneSignalId = null, type = 'ad', userId = null, coins = 0, retries = 3) {
   for (let i = 0; i < retries; i++) {
     try {
@@ -317,6 +316,13 @@ async function sendNotification(message, target = 'All', oneSignalId = null, typ
         app_id: ONESIGNAL_APP_ID,
         contents: { en: message },
         headings: { en: 'Vidalyzer Success! 🎯' },
+        android_accent_color: 'FF0000', // Red accent color
+        android_channel_id: 'fcm_default_channel', // Ensure this matches your app's channel
+        ios_sound: 'default', // Default sound
+        android_sound: 'default', // Default sound
+        android_vibrate: [0, 1000, 1000, 1000], // Vibration pattern: off for 0ms, then 1000ms on, 1000ms off, 1000ms on
+        small_icon: 'ic_notification', // Replace with your uploaded logo name (e.g., 'ic_notification')
+        large_icon: 'ic_notification_large', // Replace with your uploaded logo name
       };
       if (oneSignalId) {
         notificationData.include_player_ids = [oneSignalId];
@@ -480,7 +486,6 @@ async function awardCoins(userId) {
     await db.collection('users').doc(userId).update(updateData);
     console.log(`Successfully awarded ${coins} coins to user ${userId}`);
 
-    // Send coin_purchase notification
     if (userData.oneSignalId && isValidOneSignalId(userData.oneSignalId) && (await canSendNotification(userId, 'coin_purchase'))) {
       const message = await generateNotificationMessage('coin_purchase', userId, coins);
       await saveNotificationToFirestore(message, 'coin_purchase', userId, false);
@@ -753,7 +758,7 @@ db.collection('Premium').onSnapshot(
   }
 );
 
-// Users snapshot listener for cooldown and ad notifications
+// Users snapshot listener for cooldown and ad notifications (single notification fix)
 db.collection('users').onSnapshot(
   (snapshot) => {
     console.log('Users snapshot triggered at', getIstTime(), 'changes:', snapshot.docChanges().length);
@@ -772,7 +777,7 @@ db.collection('users').onSnapshot(
         const userData = change.doc.data();
         const oneSignalId = userData.oneSignalId;
 
-        // Schedule ad notifications (3 per day)
+        // Schedule ad notifications (3 per day, only one at a time)
         if ((change.type === 'added' || change.type === 'modified') && userData.adNotificationCount < 3 && oneSignalId && isValidOneSignalId(oneSignalId) && (await canSendNotification(userId, 'ad'))) {
           const adNotificationInterval = Math.floor(Math.random() * (120 - 60 + 1)) + 60; // 1-2 hours
           setTimeout(async () => {
@@ -785,13 +790,12 @@ db.collection('users').onSnapshot(
           }, adNotificationInterval * 60 * 1000);
         }
 
-        // Handle cooldown notifications
+        // Handle cooldown notifications with 12-minute cooldown and vibration
         if ((change.type === 'added' || change.type === 'modified') && userData.adCooldownEndTime && oneSignalId && isValidOneSignalId(oneSignalId)) {
           const now = Date.now();
           const cooldownEndTime = userData.adCooldownEndTime;
           const timeUntilCooldownEnds = cooldownEndTime - now;
 
-          console.log(`Current time: ${now}, cooldownEndTime: ${cooldownEndTime}, timeUntilCooldownEnds: ${timeUntilCooldownEnds}ms`);
           if (timeUntilCooldownEnds > 0 && timeUntilCooldownEnds < 24 * 60 * 60 * 1000) {
             console.log(`Scheduling cooldown notification for ${userId} in ${timeUntilCooldownEnds / 1000} seconds`);
             setTimeout(async () => {
@@ -802,10 +806,8 @@ db.collection('users').onSnapshot(
                 const success = await sendNotification(message, null, oneSignalId, 'cooldown', userId);
                 console.log(`Cooldown notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}`);
                 await db.collection('users').doc(userId).update({ adCooldownEndTime: null });
-              } else {
-                console.log(`Cooldown notification skipped for ${userId}: exists=${userDoc.exists}, currentTime=${Date.now()}, cooldownEndTime=${userDoc.data()?.adCooldownEndTime}, adsWatched=${userData.adsWatched}`);
               }
-            }, timeUntilCooldownEnds);
+            }, timeUntilCooldownEnds + (2 * 60 * 1000)); // Adjusted to 12 minutes (was 15)
           } else if (timeUntilCooldownEnds <= 0 && userData.adsWatched >= ADS_TO_WATCH && (await canSendNotification(userId, 'cooldown'))) {
             console.log(`Cooldown already expired for ${userId}, sending immediate notification`);
             const message = await generateNotificationMessage('cooldown', userId);
@@ -846,7 +848,7 @@ setInterval(() => {
 
 // Constants and helper functions
 const ADS_TO_WATCH = 10;
-const COOLDOWN_MINUTES = 15;
+const COOLDOWN_MINUTES = 12; // Changed to 12 minutes
 const processedSnapshots = new Map();
 
 function isValidOneSignalId(id) {
