@@ -36,7 +36,6 @@ db.collection('users').onSnapshot(snapshot => {
     if (change.type === 'added' && !change.doc.data().oneSignalId) {
       const userId = change.doc.id;
       console.log(`Detecting missing oneSignalId for user ${userId} at ${getIstTime()}`);
-      // Simulate fetching oneSignalId (replace with actual logic if possible)
       const oneSignalId = `simulated-${userId}-${Date.now()}`; // Placeholder
       db.collection('users').doc(userId).set({ oneSignalId }, { merge: true })
         .then(() => console.log(`Set oneSignalId ${oneSignalId} for ${userId}`))
@@ -56,7 +55,7 @@ async function sendNotification(message, oneSignalId, userId, retries = 3) {
         console.warn(`Invalid oneSignalId format: ${oneSignalId} for user ${userId}`);
         return false;
       }
-      console.log('Preparing to send cooldown notification:', { message, oneSignalId, userId });
+      console.log('Preparing to send notification:', { message, oneSignalId, userId });
 
       const notificationData = {
         app_id: process.env.ONESIGNAL_APP_ID,
@@ -84,7 +83,7 @@ async function sendNotification(message, oneSignalId, userId, retries = 3) {
       );
 
       if (response.data.id) {
-        console.log(`Cooldown notification sent to ${oneSignalId}: ${message}`, {
+        console.log(`Notification sent to ${oneSignalId}: ${message}`, {
           notificationId: response.data.id,
           recipients: response.data.recipients,
         });
@@ -96,7 +95,7 @@ async function sendNotification(message, oneSignalId, userId, retries = 3) {
         return false;
       }
     } catch (error) {
-      console.error('Error sending cooldown notification (attempt ' + (i + 1) + '):', {
+      console.error('Error sending notification (attempt ' + (i + 1) + '):', {
         message,
         oneSignalId,
         userId,
@@ -150,7 +149,7 @@ async function checkAdStatus(userId) {
       coins: 0,
       adCooldownEndTime: 0,
       recentRewards: [],
-      oneSignalId: '', // Default empty, to be filled by trigger
+      oneSignalId: '',
     }, { merge: true });
     console.log(`Initialized user document for ${userId}`);
     return {
@@ -226,6 +225,55 @@ async function awardReward(userId) {
   } catch (error) {
     console.error(`Error awarding reward for ${userId}:`, error.message, error.stack);
     return { message: 'Failed to save reward. Please try again.', error: error.message };
+  }
+}
+
+// NEW: Check for expired cooldowns and send notifications
+async function checkCooldowns() {
+  try {
+    const now = Date.now();
+    console.log(`Checking for expired cooldowns at ${getIstTime()}`);
+    
+    // Query users with active cooldowns (adCooldownEndTime > 0) that have expired (adCooldownEndTime <= now)
+    const querySnapshot = await db.collection('users')
+      .where('adCooldownEndTime', '>', 0)
+      .where('adCooldownEndTime', '<=', now)
+      .get();
+
+    console.log(`Found ${querySnapshot.size} users with expired cooldowns`);
+
+    for (const doc of querySnapshot.docs) {
+      const userId = doc.id;
+      const userData = doc.data();
+      const { oneSignalId, adCooldownEndTime } = userData;
+
+      if (!oneSignalId) {
+        console.warn(`No oneSignalId for user ${userId}, skipping notification`);
+        continue;
+      }
+
+      // Double-check cooldown expiration to avoid race conditions
+      if (adCooldownEndTime > now) {
+        console.log(`Cooldown for ${userId} not yet expired, skipping`);
+        continue;
+      }
+
+      const message = 'Timer ended! Continue watching ads to earn coins! 🎉';
+      const notificationSent = await sendNotification(message, oneSignalId, userId);
+
+      if (notificationSent) {
+        // Reset adCooldownEndTime to prevent repeated notifications
+        await db.collection('users').doc(userId).update({
+          adCooldownEndTime: 0,
+          lastCooldownNotification: new Date().toISOString(), // Track when notification was sent
+        });
+        console.log(`Cooldown notification sent and adCooldownEndTime reset for ${userId}`);
+      } else {
+        console.error(`Failed to send cooldown notification for ${userId}`);
+      }
+    }
+  } catch (error) {
+    console.error('Error in checkCooldowns:', error.message, error.stack);
   }
 }
 
@@ -317,6 +365,9 @@ app.post('/update-onesignal', async (req, res) => {
 
 app.get('/', (req, res) => res.send('Vidalyzer Backend Running'));
 app.get('/ping', (req, res) => res.status(200).send('OK'));
+
+// NEW: Run cooldown check every minute
+setInterval(checkCooldowns, 60 * 1000); // Check every 60 seconds
 
 try {
   app.listen(port, () => console.log(`Server on port ${port} at ${getIstTime()}`));
