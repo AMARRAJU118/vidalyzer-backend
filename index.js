@@ -12,8 +12,9 @@ const ADS_TO_WATCH = 10;
 const COOLDOWN_MINUTES = 15;
 
 // Firebase Admin SDK initialization
+let firebaseApp;
 try {
-  initializeApp({
+  firebaseApp = initializeApp({
     credential: require('firebase-admin').credential.cert({
       projectId: process.env.FIREBASE_PROJECT_ID,
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
@@ -293,7 +294,7 @@ app.post('/watch-ad', async (req, res) => {
   const cooldownElapsed = userData.adCooldownEndTime <= now;
 
   if (userData.adsWatched < ADS_TO_WATCH && cooldownElapsed) {
-    await db.collection('users').doc(userId).update({ adsWatched: userData.adsWatched + 1 });
+    await db.collection('users').doc(userId).update({ adsWatched: uaerData.adsWatched + 1 });
     console.log(`Ad watched for ${userId}: ${userData.adsWatched + 1}/${ADS_TO_WATCH}`);
     res.send({ message: `Ad ${userData.adsWatched + 1}/${ADS_TO_WATCH} watched! Grow soon!` });
   } else if (!cooldownElapsed) {
@@ -364,28 +365,47 @@ app.post('/update-onesignal', async (req, res) => {
 
 app.get('/', (req, res) => res.send('Vidalyzer Backend Running'));
 app.get('/ping', (req, res) => res.status(200).send('OK'));
+app.get('/health', (req, res) => res.status(200).send({ status: 'healthy', timestamp: getIstTime() }));
 
-// Run cooldown check every minute
+// Run cooldown check immediately and every minute
+checkCooldowns();
 setInterval(checkCooldowns, 60 * 1000);
 
 // Start server
+let server;
 try {
-  app.listen(port, () => console.log(`Server on port ${port} at ${getIstTime()}`));
+  server = app.listen(port, () => console.log(`Server on port ${port} at ${getIstTime()}`));
 } catch (error) {
   console.error('Server start failed:', error.message, error.stack);
   process.exit(1);
 }
 
-// Keep server alive with periodic pings
+// Keep server alive with frequent pings
 setInterval(() => {
   console.log(`Pinging self at ${getIstTime()}`);
   axios.get(`http://localhost:${port}/ping`).catch(err => console.error('Ping failed:', err.message));
-}, 1 * 60 * 1000); // Reduced to 1 minute to prevent idle timeouts
+}, 30 * 1000); // Ping every 30 seconds
 
 // Handle SIGTERM gracefully
 process.on('SIGTERM', () => {
   console.log('Received SIGTERM. Performing cleanup and exiting...');
+  if (server) {
+    server.close(() => {
+      console.log('Express server closed');
+    });
+  }
+  // Note: Firebase Admin SDK automatically handles cleanup
   process.exit(0);
+});
+
+// Handle uncaught exceptions to prevent crashes
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error.message, error.stack);
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
 function isValidOneSignalId(id) {
