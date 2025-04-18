@@ -5,7 +5,7 @@ const { getFirestore } = require('firebase-admin/firestore');
 
 const app = express();
 app.use(express.json());
-const port = process.env.PORT || 10000;
+const port = process.env.PORT || 8080; // Match logs showing port 8080
 
 // Constants
 const ADS_TO_WATCH = 10;
@@ -36,10 +36,7 @@ db.collection('users').onSnapshot(snapshot => {
     if (change.type === 'added' && !change.doc.data().oneSignalId) {
       const userId = change.doc.id;
       console.log(`Detecting missing oneSignalId for user ${userId} at ${getIstTime()}`);
-      const oneSignalId = `simulated-${userId}-${Date.now()}`; // Placeholder
-      db.collection('users').doc(userId).set({ oneSignalId }, { merge: true })
-        .then(() => console.log(`Set oneSignalId ${oneSignalId} for ${userId}`))
-        .catch(err => console.error(`Failed to set oneSignalId for ${userId}:`, err));
+      console.warn(`No oneSignalId set for ${userId}. Waiting for client to provide ID.`);
     }
   });
 });
@@ -62,7 +59,6 @@ async function sendNotification(message, oneSignalId, userId, retries = 3) {
         contents: { en: message },
         headings: { en: 'Vidalyzer Alert! ⏰' },
         android_accent_color: 'FF0000',
-        android_channel_id: 'fcm_default_channel',
         ios_sound: 'default',
         android_sound: 'default',
         android_vibrate: [0, 1000, 1000, 1000],
@@ -228,31 +224,35 @@ async function awardReward(userId) {
   }
 }
 
-// NEW: Check for expired cooldowns and send notifications
+// Check for expired cooldowns and send notifications
 async function checkCooldowns() {
   try {
     const now = Date.now();
     console.log(`Checking for expired cooldowns at ${getIstTime()}`);
     
-    // Query users with active cooldowns (adCooldownEndTime > 0) that have expired (adCooldownEndTime <= now)
     const querySnapshot = await db.collection('users')
       .where('adCooldownEndTime', '>', 0)
       .where('adCooldownEndTime', '<=', now)
       .get();
 
     console.log(`Found ${querySnapshot.size} users with expired cooldowns`);
+    if (querySnapshot.empty) {
+      console.log('No users with expired cooldowns.');
+      return;
+    }
 
     for (const doc of querySnapshot.docs) {
       const userId = doc.id;
       const userData = doc.data();
       const { oneSignalId, adCooldownEndTime } = userData;
 
-      if (!oneSignalId) {
-        console.warn(`No oneSignalId for user ${userId}, skipping notification`);
+      console.log(`Processing user ${userId}:`, { adCooldownEndTime, oneSignalId });
+
+      if (!oneSignalId || !isValidOneSignalId(oneSignalId)) {
+        console.warn(`Invalid or missing oneSignalId for user ${userId}: ${oneSignalId}`);
         continue;
       }
 
-      // Double-check cooldown expiration to avoid race conditions
       if (adCooldownEndTime > now) {
         console.log(`Cooldown for ${userId} not yet expired, skipping`);
         continue;
@@ -262,10 +262,9 @@ async function checkCooldowns() {
       const notificationSent = await sendNotification(message, oneSignalId, userId);
 
       if (notificationSent) {
-        // Reset adCooldownEndTime to prevent repeated notifications
         await db.collection('users').doc(userId).update({
           adCooldownEndTime: 0,
-          lastCooldownNotification: new Date().toISOString(), // Track when notification was sent
+          lastCooldownNotification: new Date().toISOString(),
         });
         console.log(`Cooldown notification sent and adCooldownEndTime reset for ${userId}`);
       } else {
@@ -366,9 +365,10 @@ app.post('/update-onesignal', async (req, res) => {
 app.get('/', (req, res) => res.send('Vidalyzer Backend Running'));
 app.get('/ping', (req, res) => res.status(200).send('OK'));
 
-// NEW: Run cooldown check every minute
-setInterval(checkCooldowns, 60 * 1000); // Check every 60 seconds
+// Run cooldown check every minute
+setInterval(checkCooldowns, 60 * 1000);
 
+// Start server
 try {
   app.listen(port, () => console.log(`Server on port ${port} at ${getIstTime()}`));
 } catch (error) {
@@ -376,10 +376,17 @@ try {
   process.exit(1);
 }
 
+// Keep server alive with periodic pings
 setInterval(() => {
   console.log(`Pinging self at ${getIstTime()}`);
   axios.get(`http://localhost:${port}/ping`).catch(err => console.error('Ping failed:', err.message));
-}, 5 * 60 * 1000);
+}, 1 * 60 * 1000); // Reduced to 1 minute to prevent idle timeouts
+
+// Handle SIGTERM gracefully
+process.on('SIGTERM', () => {
+  console.log('Received SIGTERM. Performing cleanup and exiting...');
+  process.exit(0);
+});
 
 function isValidOneSignalId(id) {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -391,7 +398,13 @@ const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID;
 const ONESIGNAL_API_KEY = process.env.ONESIGNAL_API_KEY;
 
 if (!ONESIGNAL_APP_ID || !ONESIGNAL_API_KEY || !process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_CLIENT_EMAIL || !process.env.FIREBASE_PRIVATE_KEY) {
-  console.error('Missing env vars:', { ONESIGNAL_APP_ID, ONESIGNAL_API_KEY, FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID });
+  console.error('Missing env vars:', {
+    ONESIGNAL_APP_ID: !!ONESIGNAL_APP_ID,
+    ONESIGNAL_API_KEY: !!ONESIGNAL_API_KEY,
+    FIREBASE_PROJECT_ID: !!process.env.FIREBASE_PROJECT_ID,
+    FIREBASE_CLIENT_EMAIL: !!process.env.FIREBASE_CLIENT_EMAIL,
+    FIREBASE_PRIVATE_KEY: !!process.env.FIREBASE_PRIVATE_KEY,
+  });
   process.exit(1);
 }
 
