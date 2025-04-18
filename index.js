@@ -7,6 +7,10 @@ const app = express();
 app.use(express.json());
 const port = process.env.PORT || 10000;
 
+// Constants
+const ADS_TO_WATCH = 10;
+const COOLDOWN_MINUTES = 15;
+
 // Firebase Admin SDK initialization
 try {
   initializeApp({
@@ -35,17 +39,17 @@ const getIstTime = () => new Date().toLocaleString('en-US', { timeZone: 'Asia/Ko
 async function sendNotification(message, oneSignalId, userId, retries = 3) {
   for (let i = 0; i < retries; i++) {
     try {
-      if (!ONESIGNAL_API_KEY || !ONESIGNAL_APP_ID) {
+      if (!process.env.ONESIGNAL_API_KEY || !process.env.ONESIGNAL_APP_ID) {
         throw new Error('OneSignal credentials are not set');
       }
       if (!isValidOneSignalId(oneSignalId)) {
-        console.warn(`Invalid oneSignalId format: ${oneSignalId}`);
+        console.warn(`Invalid oneSignalId format: ${oneSignalId} for user ${userId}`);
         return false;
       }
       console.log('Preparing to send cooldown notification:', { message, oneSignalId, userId });
 
       const notificationData = {
-        app_id: ONESIGNAL_APP_ID,
+        app_id: process.env.ONESIGNAL_APP_ID,
         contents: { en: message },
         headings: { en: 'Vidalyzer Alert! ⏰' },
         android_accent_color: 'FF0000',
@@ -63,7 +67,7 @@ async function sendNotification(message, oneSignalId, userId, retries = 3) {
         notificationData,
         {
           headers: {
-            Authorization: `Basic ${ONESIGNAL_API_KEY}`,
+            Authorization: `Basic ${process.env.ONESIGNAL_API_KEY}`,
             'Content-Type': 'application/json',
           },
         }
@@ -360,22 +364,26 @@ db.collection('users').onSnapshot(
         const userData = change.doc.data();
         const oneSignalId = userData.oneSignalId;
 
-        // Handle cooldown notifications
         if ((change.type === 'added' || change.type === 'modified') && userData.adCooldownEndTime && oneSignalId && isValidOneSignalId(oneSignalId)) {
           const now = Date.now();
           const cooldownEndTime = userData.adCooldownEndTime;
           const timeUntilCooldownEnds = cooldownEndTime - now;
 
-          if (timeUntilCooldownEnds > 0 && timeUntilCooldownEnds < 24 * 60 * 60 * 1000) {
+          if (timeUntilCooldownEnds > 0 && timeUntilCooldownEnds <= 24 * 60 * 60 * 1000) {
             console.log(`Scheduling cooldown notification for ${userId} in ${timeUntilCooldownEnds / 1000} seconds`);
             setTimeout(async () => {
               const userDoc = await db.collection('users').doc(userId).get();
-              if (userDoc.exists && userDoc.data().adCooldownEndTime <= Date.now()) {
-                const message = 'Cooldown over! Watch ads to earn coins now! ⏰';
-                await saveNotificationToFirestore(message, 'cooldown', userId, false);
-                const success = await sendNotification(message, oneSignalId, userId);
-                console.log(`Cooldown notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}, message: ${message}`);
-                await db.collection('users').doc(userId).update({ adCooldownEndTime: 0 });
+              if (userDoc.exists) {
+                const currentData = userDoc.data();
+                if (currentData.adCooldownEndTime <= Date.now() && currentData.adsWatched >= ADS_TO_WATCH) {
+                  const message = 'Cooldown over! Watch ads to earn coins now! ⏰';
+                  await saveNotificationToFirestore(message, 'cooldown', userId, false);
+                  const success = await sendNotification(message, oneSignalId, userId);
+                  console.log(`Cooldown notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}`);
+                  if (success) {
+                    await db.collection('users').doc(userId).update({ adCooldownEndTime: 0 });
+                  }
+                }
               }
             }, timeUntilCooldownEnds);
           } else if (timeUntilCooldownEnds <= 0 && userData.adsWatched >= ADS_TO_WATCH) {
@@ -383,8 +391,10 @@ db.collection('users').onSnapshot(
             const message = 'Cooldown over! Watch ads to earn coins now! ⏰';
             await saveNotificationToFirestore(message, 'cooldown', userId, false);
             const success = await sendNotification(message, oneSignalId, userId);
-            console.log(`Immediate cooldown notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}, message: ${message}`);
-            await db.collection('users').doc(userId).update({ adCooldownEndTime: 0 });
+            console.log(`Immediate cooldown notification ${success ? 'sent' : 'failed'} to ${userId}, oneSignalId: ${oneSignalId}`);
+            if (success) {
+              await db.collection('users').doc(userId).update({ adCooldownEndTime: 0 });
+            }
           }
         }
       } catch (error) {
@@ -397,9 +407,11 @@ db.collection('users').onSnapshot(
   }
 );
 
+// API endpoints
 app.get('/', (req, res) => res.send('Vidalyzer Backend Running'));
-app.get('/ping', (req, res) => res.send('OK'));
+app.get('/ping', (req, res) => res.status(200).send('OK'));
 
+// Start server
 try {
   app.listen(port, () => {
     console.log(`Server running on port ${port} at ${getIstTime()}`);
@@ -409,26 +421,26 @@ try {
   process.exit(1);
 }
 
+// Self-ping to keep instance alive
 setInterval(() => {
   console.log(`Pinging self at ${getIstTime()} to keep instance alive`);
   axios
-    .get(`${RENDER_URL}/ping`)
+    .get(`http://localhost:${port}/ping`)
+    .then(() => console.log('Ping successful'))
     .catch((err) => console.error('Ping failed:', err.message, err.stack));
 }, 5 * 60 * 1000);
 
-// Constants and helper functions
-const ADS_TO_WATCH = 10;
-const COOLDOWN_MINUTES = 15;
-
+// Helper function
 function isValidOneSignalId(id) {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   return typeof id === 'string' && uuidRegex.test(id);
 }
 
+// Environment setup
 process.env.TZ = 'Asia/Kolkata';
 const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID;
 const ONESIGNAL_API_KEY = process.env.ONESIGNAL_API_KEY;
-const RENDER_URL = process.env.RENDER_URL || 'https://vidalyzer-backend.onrender.com';
+const RENDER_URL = process.env.RENDER_URL || `http://localhost:${port}`;
 
 // Environment variable validation
 if (!ONESIGNAL_APP_ID || !ONESIGNAL_API_KEY || !process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_CLIENT_EMAIL || !process.env.FIREBASE_PRIVATE_KEY) {
@@ -442,5 +454,5 @@ if (!ONESIGNAL_APP_ID || !ONESIGNAL_API_KEY || !process.env.FIREBASE_PROJECT_ID 
   process.exit(1);
 }
 
-console.log('Server starting at', new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+console.log('Server starting at', getIstTime());
 console.log('Timezone:', process.env.TZ);
